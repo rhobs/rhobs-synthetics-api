@@ -1,0 +1,241 @@
+openapi: 3.1.1
+info:
+  title: RHOBS Synthetics Probes API
+  version: 0.0.1
+  description: API for managing Blackbox Probes for ROSA HCP Clusters.
+tags:
+  - name: probes
+    description: Operations related to metrics probes
+paths:
+  /metrics/probes:
+    get:
+      summary: Get a list of all configured probes
+      operationId: listProbes
+      tags:
+        - probes
+      parameters:
+        - name: management_cluster_id
+          in: query
+          description: The ID of the management cluster. Required if 'cluster_id' is not provided.
+          schema:
+            type: string
+          example: mc-12345
+        - name: cluster_id
+          in: query
+          description: The ID of the HCP Cluster. Required if 'management_cluster_id' is not provided.
+          schema:
+            $ref: '#/components/schemas/ClusterId'
+          example: d290f1ee-6c54-4b01-90e6-d701748f0851
+        - name: private
+          in: query
+          description: Filter by private/public clusters. Defaults to false.
+          schema:
+            type: boolean
+            default: false
+          example: true
+      responses:
+        '200':
+          description: A list of all configured probes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProbesArrayResponseNoPagination'
+        '400':
+          description: Invalid request parameters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponseMissingParam'
+    post:
+      summary: Creates a new probe
+      operationId: createProbe
+      tags:
+        - probes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProbeRequest'
+      responses:
+        '201':
+          description: Probe created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProbesArrayResponse'
+
+  /metrics/probes/{cluster_id}:
+    get:
+      summary: Get a probe by Cluster ID
+      operationId: getProbeById
+      tags:
+        - probes
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          description: The ID of the HCP cluster to retrieve the probe for.
+          schema:
+            $ref: '#/components/schemas/ClusterId'
+          example: d290f1ee-6c54-4b01-90e6-d701748f0851
+      responses:
+        "200":
+          description: Configured probe matching the provided ID.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProbesArrayResponse"
+        "404":
+          description: Probe not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponseNotFound"
+    delete:
+      summary: Deletes a probe matching provided ID
+      operationId: deleteProbe
+      tags:
+        - probes
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          description: The ID of the HCP cluster whose probe is to be deleted.
+          schema:
+            $ref: '#/components/schemas/ClusterId'
+          example: d290f1ee-6c54-4b01-90e6-d701748f0851
+      responses:
+        '204':
+          description: Probe deleted successfully. No content.
+        '404':
+          description: Probe not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponseNotFound'
+
+components:
+   schemas:
+    ClusterId:
+      type: string
+      format: uuid
+      description: The unique identifier of an HCP cluster (UUID format).
+      example: d290f1ee-6c54-4b01-90e6-d701748f0851
+
+    ProbeObject:
+      type: object
+      description: Represents a single probe configuration.
+      properties:
+        cluster_id:
+          $ref: '#/components/schemas/ClusterId'
+        apiserver_url:
+          type: string
+          format: url
+          description: The API server URL for the cluster.
+          example: https://api.example-cluster.foo.devshift.org
+        management_cluster_id:
+          type: string
+          description: The ID of the management cluster.
+          example: hs-mc-12345
+        private:
+          type: boolean
+          description: Indicates if the cluster associated with the probe is private.
+          example: false
+      required:
+        - id
+        - cluster_id
+        - apiserver_url
+        - management_cluster_id
+        - private
+
+    ProbesArrayResponseNoPagination: # TODO: Add pagination and remote this
+      type: object
+      properties:
+        probes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProbeObject'
+          description: Array of probe objects.
+      required:
+        - probes
+
+    ProbesArrayResponse:
+      type: object
+      properties:
+        probes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProbeObject'
+          description: Array containing one or more probe objects.
+      required:
+        - probes
+
+    CreateProbeRequest:
+      type: object
+      properties:
+        cluster_id:
+          $ref: '#/components/schemas/ClusterId'
+          description: The ID of the HCP cluster for the new probe.
+          example: d290f1ee-6c54-4b01-90e6-d701748f0851
+        apiserver_url:
+          type: string
+          format: url
+          description: The API server URL for the cluster.
+          example: https://api.new-cluster.example.com
+        management_cluster_id:
+          type: string
+          description: The ID of the management cluster associated with the new probe.
+          example: hs-mc-12345
+        private:
+          type: boolean
+          description: Specifies if the cluster is private.
+          example: true
+      required:
+        - cluster_id
+        - apiserver_url
+        - management_cluster_id
+        - private
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: integer
+              format: int32
+              description: HTTP status code.
+              example: 400
+            message:
+              type: string
+              description: A human-readable error message.
+              example: 'Missing required parameter: `management_cluster_id` or `cluster_id`'
+          required:
+            - code
+            - message
+      required:
+        - error
+
+    ErrorResponseMissingParam:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponse'
+        - type: object
+          properties:
+            error:
+              properties:
+                message:
+                  example: "Missing required parameter: ‘management_cluster_id’ or `cluster_id`"
+
+    ErrorResponseNotFound:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponse'
+        - type: object
+          properties:
+            error:
+              properties:
+                code:
+                  example: 404
+                message:
+                  example: "Probe doesn’t exist"
