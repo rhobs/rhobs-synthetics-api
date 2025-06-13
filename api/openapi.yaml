@@ -1,4 +1,4 @@
-openapi: 3.1.1
+openapi: 3.0.3
 info:
   title: RHOBS Synthetics Probes API
   version: 0.0.1
@@ -14,38 +14,22 @@ paths:
       tags:
         - probes
       parameters:
-        - name: management_cluster_id
-          in: query
-          description: The ID of the management cluster. Required if 'cluster_id' is not provided.
-          schema:
-            type: string
-          example: mc-12345
-        - name: cluster_id
-          in: query
-          description: The ID of the HCP Cluster. Required if 'management_cluster_id' is not provided.
-          schema:
-            $ref: '#/components/schemas/ClusterId'
-          example: d290f1ee-6c54-4b01-90e6-d701748f0851
-        - name: private
-          in: query
-          description: Filter by private/public clusters. Defaults to false.
-          schema:
-            type: boolean
-            default: false
-          example: true
+        - $ref: '#/components/parameters/ManagementClusterIdQueryParam'
+        - $ref: '#/components/parameters/ClusterIsPrivateQueryParam'
+          default: false
       responses:
         '200':
           description: A list of all configured probes.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProbesArrayResponseNoPagination'
+                $ref: '#/components/schemas/ProbesArrayResponse' # TODO: Add pagination and remote this
         '400':
           description: Invalid request parameters.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponseMissingParam'
+                $ref: '#/components/schemas/ErrorResponse'
     post:
       summary: Creates a new probe
       operationId: createProbe
@@ -72,13 +56,7 @@ paths:
       tags:
         - probes
       parameters:
-        - name: cluster_id
-          in: path
-          required: true
-          description: The ID of the HCP cluster to retrieve the probe for.
-          schema:
-            $ref: '#/components/schemas/ClusterId'
-          example: d290f1ee-6c54-4b01-90e6-d701748f0851
+        - $ref: '#/components/parameters/ClusterIdPathParam'
       responses:
         "200":
           description: Configured probe matching the provided ID.
@@ -98,13 +76,7 @@ paths:
       tags:
         - probes
       parameters:
-        - name: cluster_id
-          in: path
-          required: true
-          description: The ID of the HCP cluster whose probe is to be deleted.
-          schema:
-            $ref: '#/components/schemas/ClusterId'
-          example: d290f1ee-6c54-4b01-90e6-d701748f0851
+        - $ref: '#/components/parameters/ClusterIdPathParam'
       responses:
         '204':
           description: Probe deleted successfully. No content.
@@ -116,49 +88,72 @@ paths:
                 $ref: '#/components/schemas/ErrorResponseNotFound'
 
 components:
-   schemas:
-    ClusterId:
+  parameters:
+    ManagementClusterIdQueryParam:
+        name: management_cluster_id
+        in: query
+        description: Filter by management cluster ID.
+        schema:
+          $ref: '#/components/schemas/ManagementClusterIdSchema'
+        example: 13210d49-4112-42de-8e5c-03f448292cc4
+
+    ClusterIdPathParam:
+        name: cluster_id
+        in: path
+        required: true
+        description: The ID of the HCP cluster to retrieve the probe for.
+        schema:
+          $ref: '#/components/schemas/ClusterIdSchema'
+        example: d290f1ee-6c54-4b01-90e6-d701748f0851
+
+    ClusterIsPrivateQueryParam:
+        name: private
+        in: query
+        description: Filter by private/public clusters. Defaults to false.
+        schema:
+          $ref: '#/components/schemas/ClusterIsPrivateSchema'
+
+  schemas:
+    ManagementClusterIdSchema:
+      type: string
+      format: uuid
+      description: The unique identifier of an HCP Management Cluster (UUID format).
+      example: 8e0a074c-f1e3-4957-be75-425e611142e4
+
+    ClusterIdSchema:
       type: string
       format: uuid
       description: The unique identifier of an HCP cluster (UUID format).
       example: d290f1ee-6c54-4b01-90e6-d701748f0851
 
+    ApiServerUrlSchema:
+      type: string
+      format: url
+      description: The API server URL for the cluster.
+      example: https://api.example-cluster.foo.devshift.org
+
+    ClusterIsPrivateSchema:
+      type: boolean
+      description: Indicates if the cluster associated with the probe is private.
+      example: false
+
     ProbeObject:
       type: object
       description: Represents a single probe configuration.
       properties:
-        cluster_id:
-          $ref: '#/components/schemas/ClusterId'
+        id:
+          $ref: '#/components/schemas/ClusterIdSchema'
         apiserver_url:
-          type: string
-          format: url
-          description: The API server URL for the cluster.
-          example: https://api.example-cluster.foo.devshift.org
+          $ref: '#/components/schemas/ApiServerUrlSchema'
         management_cluster_id:
-          type: string
-          description: The ID of the management cluster.
-          example: hs-mc-12345
+          $ref: '#/components/schemas/ManagementClusterIdSchema'
         private:
-          type: boolean
-          description: Indicates if the cluster associated with the probe is private.
-          example: false
+          $ref: '#/components/schemas/ClusterIsPrivateSchema'
       required:
         - id
-        - cluster_id
         - apiserver_url
         - management_cluster_id
         - private
-
-    ProbesArrayResponseNoPagination: # TODO: Add pagination and remote this
-      type: object
-      properties:
-        probes:
-          type: array
-          items:
-            $ref: '#/components/schemas/ProbeObject'
-          description: Array of probe objects.
-      required:
-        - probes
 
     ProbesArrayResponse:
       type: object
@@ -175,22 +170,13 @@ components:
       type: object
       properties:
         cluster_id:
-          $ref: '#/components/schemas/ClusterId'
-          description: The ID of the HCP cluster for the new probe.
-          example: d290f1ee-6c54-4b01-90e6-d701748f0851
+          $ref: '#/components/schemas/ClusterIdSchema'
         apiserver_url:
-          type: string
-          format: url
-          description: The API server URL for the cluster.
-          example: https://api.new-cluster.example.com
+          $ref: '#/components/schemas/ApiServerUrlSchema'
         management_cluster_id:
-          type: string
-          description: The ID of the management cluster associated with the new probe.
-          example: hs-mc-12345
+          $ref: '#/components/schemas/ManagementClusterIdSchema'
         private:
-          type: boolean
-          description: Specifies if the cluster is private.
-          example: true
+          $ref: '#/components/schemas/ClusterIsPrivateSchema'
       required:
         - cluster_id
         - apiserver_url
@@ -217,16 +203,6 @@ components:
             - message
       required:
         - error
-
-    ErrorResponseMissingParam:
-      allOf:
-        - $ref: '#/components/schemas/ErrorResponse'
-        - type: object
-          properties:
-            error:
-              properties:
-                message:
-                  example: "Missing required parameter: ‘management_cluster_id’ or `cluster_id`"
 
     ErrorResponseNotFound:
       allOf:
