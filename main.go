@@ -24,9 +24,11 @@ func runWebServer(addr string) error {
 
 	server := api.NewServer()
 
+	serverHandler := api.NewStrictHandler(server, nil)
+
 	r := http.NewServeMux()
 
-	api.HandlerFromMux(server, r)
+	api.HandlerFromMux(serverHandler, r)
 
 	// Use validation middleware to check all requests against the OpenAPI schema.
 	h := middleware.OapiRequestValidator(swagger)(r)

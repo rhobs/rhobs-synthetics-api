@@ -8,7 +8,9 @@ package api
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/oapi-codegen/runtime"
+	strictnethttp "github.com/oapi-codegen/runtime/strictmiddleware/nethttp"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
@@ -358,6 +361,254 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/metrics/probes/{cluster_id}", wrapper.GetProbeById)
 
 	return m
+}
+
+type ListProbesRequestObject struct {
+	Params ListProbesParams
+}
+
+type ListProbesResponseObject interface {
+	VisitListProbesResponse(w http.ResponseWriter) error
+}
+
+type ListProbes200JSONResponse ProbesArrayResponse
+
+func (response ListProbes200JSONResponse) VisitListProbesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListProbes400JSONResponse ErrorResponse
+
+func (response ListProbes400JSONResponse) VisitListProbesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CreateProbeRequestObject struct {
+	Body *CreateProbeJSONRequestBody
+}
+
+type CreateProbeResponseObject interface {
+	VisitCreateProbeResponse(w http.ResponseWriter) error
+}
+
+type CreateProbe201JSONResponse ProbesArrayResponse
+
+func (response CreateProbe201JSONResponse) VisitCreateProbeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteProbeRequestObject struct {
+	ClusterId ClusterIdPathParam `json:"cluster_id"`
+}
+
+type DeleteProbeResponseObject interface {
+	VisitDeleteProbeResponse(w http.ResponseWriter) error
+}
+
+type DeleteProbe204Response struct {
+}
+
+func (response DeleteProbe204Response) VisitDeleteProbeResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteProbe404JSONResponse ErrorResponseNotFound
+
+func (response DeleteProbe404JSONResponse) VisitDeleteProbeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetProbeByIdRequestObject struct {
+	ClusterId ClusterIdPathParam `json:"cluster_id"`
+}
+
+type GetProbeByIdResponseObject interface {
+	VisitGetProbeByIdResponse(w http.ResponseWriter) error
+}
+
+type GetProbeById200JSONResponse ProbesArrayResponse
+
+func (response GetProbeById200JSONResponse) VisitGetProbeByIdResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetProbeById404JSONResponse ErrorResponseNotFound
+
+func (response GetProbeById404JSONResponse) VisitGetProbeByIdResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+// StrictServerInterface represents all server handlers.
+type StrictServerInterface interface {
+	// Get a list of all configured probes
+	// (GET /metrics/probes)
+	ListProbes(ctx context.Context, request ListProbesRequestObject) (ListProbesResponseObject, error)
+	// Creates a new probe
+	// (POST /metrics/probes)
+	CreateProbe(ctx context.Context, request CreateProbeRequestObject) (CreateProbeResponseObject, error)
+	// Deletes a probe matching provided ID
+	// (DELETE /metrics/probes/{cluster_id})
+	DeleteProbe(ctx context.Context, request DeleteProbeRequestObject) (DeleteProbeResponseObject, error)
+	// Get a probe by Cluster ID
+	// (GET /metrics/probes/{cluster_id})
+	GetProbeById(ctx context.Context, request GetProbeByIdRequestObject) (GetProbeByIdResponseObject, error)
+}
+
+type StrictHandlerFunc = strictnethttp.StrictHTTPHandlerFunc
+type StrictMiddlewareFunc = strictnethttp.StrictHTTPMiddlewareFunc
+
+type StrictHTTPServerOptions struct {
+	RequestErrorHandlerFunc  func(w http.ResponseWriter, r *http.Request, err error)
+	ResponseErrorHandlerFunc func(w http.ResponseWriter, r *http.Request, err error)
+}
+
+func NewStrictHandler(ssi StrictServerInterface, middlewares []StrictMiddlewareFunc) ServerInterface {
+	return &strictHandler{ssi: ssi, middlewares: middlewares, options: StrictHTTPServerOptions{
+		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		},
+		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		},
+	}}
+}
+
+func NewStrictHandlerWithOptions(ssi StrictServerInterface, middlewares []StrictMiddlewareFunc, options StrictHTTPServerOptions) ServerInterface {
+	return &strictHandler{ssi: ssi, middlewares: middlewares, options: options}
+}
+
+type strictHandler struct {
+	ssi         StrictServerInterface
+	middlewares []StrictMiddlewareFunc
+	options     StrictHTTPServerOptions
+}
+
+// ListProbes operation middleware
+func (sh *strictHandler) ListProbes(w http.ResponseWriter, r *http.Request, params ListProbesParams) {
+	var request ListProbesRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListProbes(ctx, request.(ListProbesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListProbes")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListProbesResponseObject); ok {
+		if err := validResponse.VisitListProbesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateProbe operation middleware
+func (sh *strictHandler) CreateProbe(w http.ResponseWriter, r *http.Request) {
+	var request CreateProbeRequestObject
+
+	var body CreateProbeJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateProbe(ctx, request.(CreateProbeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateProbe")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateProbeResponseObject); ok {
+		if err := validResponse.VisitCreateProbeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteProbe operation middleware
+func (sh *strictHandler) DeleteProbe(w http.ResponseWriter, r *http.Request, clusterId ClusterIdPathParam) {
+	var request DeleteProbeRequestObject
+
+	request.ClusterId = clusterId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteProbe(ctx, request.(DeleteProbeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteProbe")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteProbeResponseObject); ok {
+		if err := validResponse.VisitDeleteProbeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetProbeById operation middleware
+func (sh *strictHandler) GetProbeById(w http.ResponseWriter, r *http.Request, clusterId ClusterIdPathParam) {
+	var request GetProbeByIdRequestObject
+
+	request.ClusterId = clusterId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetProbeById(ctx, request.(GetProbeByIdRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetProbeById")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetProbeByIdResponseObject); ok {
+		if err := validResponse.VisitGetProbeByIdResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }
 
 // Base64 encoded, gzipped, json marshaled Swagger object

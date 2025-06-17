@@ -1,33 +1,45 @@
 package api
 
 import (
-	"encoding/json"
+	"context"
 	"log"
-	"net/http"
 
 	"github.com/google/uuid"
 )
 
 type Server struct{}
 
-var _ ServerInterface = (*Server)(nil)
-
 func NewServer() Server {
 	return Server{}
 }
 
 // (GET /metrics/probes)
-func (Server) ListProbes(w http.ResponseWriter, r *http.Request, params ListProbesParams) {
+func (Server) ListProbes(ctx context.Context, request ListProbesRequestObject) (ListProbesResponseObject, error) {
 	// Fake respone while we wire things together
 	clusterId, err := uuid.Parse("957c5277-f74c-4b24-938a-f70bab28aab5")
 	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
+		return ListProbes400JSONResponse{
+			Error: struct {
+				Code    int32  `json:"code"`
+				Message string `json:"message"`
+			}{
+				Code:    400,
+				Message: "Invalid Cluster ID",
+			},
+		}, nil
 	}
+
 	managementClusterId, err := uuid.Parse("957c5277-f74c-4b24-938a-f70bab28aab5")
 	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
+		return ListProbes400JSONResponse{
+			Error: struct {
+				Code    int32  `json:"code"`
+				Message string `json:"message"`
+			}{
+				Code:    400,
+				Message: "Invalid Management Cluster ID",
+			},
+		}, nil
 	}
 	dummyProbe := ProbeObject{
 		Id:                  clusterId,
@@ -42,26 +54,18 @@ func (Server) ListProbes(w http.ResponseWriter, r *http.Request, params ListProb
 		},
 	}
 
-	w.WriteHeader(http.StatusOK)
-	w.Header().Set("Content-Type", "application/json")
-
-	if err := json.NewEncoder(w).Encode(responseStruct); err != nil {
-		// Handle JSON encoding errors
-		http.Error(w, "Internal Server Error: Failed to encode response", http.StatusInternalServerError)
-		return
-	}
+	return ListProbes200JSONResponse(responseStruct), nil
 }
 
 // (GET /metrics/probe/{cluster_id})
-func (Server) GetProbeById(w http.ResponseWriter, r *http.Request, clusterId ClusterIdPathParam) {
+func (Server) GetProbeById(ctx context.Context, request GetProbeByIdRequestObject) (GetProbeByIdResponseObject, error) {
 	// Fake respone while we wire things together
 	managementClusterId, err := uuid.Parse("957c5277-f74c-4b24-938a-f70bab28aab5")
 	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
+		return GetProbeById404JSONResponse{}, nil
 	}
 	dummyProbe := ProbeObject{
-		Id:                  clusterId,
+		Id:                  request.ClusterId,
 		ApiserverUrl:        "https://api.example.com/cluster-1",
 		ManagementClusterId: managementClusterId,
 		Private:             false,
@@ -73,55 +77,31 @@ func (Server) GetProbeById(w http.ResponseWriter, r *http.Request, clusterId Clu
 		},
 	}
 
-	w.WriteHeader(http.StatusOK)
-	w.Header().Set("Content-Type", "application/json")
-
-	if err := json.NewEncoder(w).Encode(responseStruct); err != nil {
-		// Handle JSON encoding errors
-		http.Error(w, "Internal Server Error: Failed to encode response", http.StatusInternalServerError)
-		return
-	}
+	return GetProbeById200JSONResponse(responseStruct), nil
 }
 
 // (POST /metrics/probes)
-func (Server) CreateProbe(w http.ResponseWriter, r *http.Request) {
-	var createReq CreateProbeRequest
-
-	// Fake respone while we wire things together
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&createReq); err != nil {
-		log.Printf("ERROR: Failed to decode CreateProbeRequest: %v", err)
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
+func (Server) CreateProbe(ctx context.Context, request CreateProbeRequestObject) (CreateProbeResponseObject, error) {
 
 	createdProbe := ProbeObject{
-		Id:                  createReq.ClusterId,
-		ApiserverUrl:        createReq.ApiserverUrl,
-		ManagementClusterId: createReq.ManagementClusterId,
-		Private:             createReq.Private,
+		Id:                  request.Body.ClusterId,
+		ApiserverUrl:        request.Body.ApiserverUrl,
+		ManagementClusterId: request.Body.ManagementClusterId,
+		Private:             request.Body.Private,
 	}
 
 	responseBody := ProbesArrayResponse{
 		Probes: []ProbeObject{createdProbe},
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(responseBody); err != nil {
-		log.Printf("ERROR: Failed to encode CreateProbe response: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
 	log.Printf("Successfully created probe for cluster ID: %s", createdProbe.Id)
-
+	return CreateProbe201JSONResponse(responseBody), nil
 }
 
 // (DELETE /metrics/probe/{cluster_id})
-func (Server) DeleteProbe(w http.ResponseWriter, r *http.Request, clusterId ClusterIdPathParam) {
+func (Server) DeleteProbe(ctx context.Context, request DeleteProbeRequestObject) (DeleteProbeResponseObject, error) {
 	// Fake respone while we wire things together
-	w.WriteHeader(http.StatusOK)
+	clusterId := request.ClusterId
 	log.Printf("Successfully deleted probe for cluster ID: %s", clusterId)
+	return DeleteProbe204Response{}, nil
 }
