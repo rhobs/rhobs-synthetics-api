@@ -123,4 +123,5 @@ func (Server) CreateProbe(w http.ResponseWriter, r *http.Request) {
 func (Server) DeleteProbe(w http.ResponseWriter, r *http.Request, clusterId ClusterIdPathParam) {
 	// Fake respone while we wire things together
 	w.WriteHeader(http.StatusOK)
+	log.Printf("Successfully deleted probe for cluster ID: %s", clusterId)
 }
