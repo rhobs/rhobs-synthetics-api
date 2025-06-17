@@ -22,7 +22,6 @@ generate: ensure-oapi-codegen
 	@mkdir -p pkg/client # Ensure pkg/client directory exists
 	$(GOENV) go generate -v ./...
 
-
 lint:
 	$(GOBIN)/golangci-lint run ./...
 
