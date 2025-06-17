@@ -1,0 +1,7 @@
+package: api
+output: probes.gen.go
+generate:
+  std-http-server: true
+  strict-server: true
+  embedded-spec: true
+  models: true
