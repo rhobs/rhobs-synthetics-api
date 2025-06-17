@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 
+	middleware "github.com/oapi-codegen/nethttp-middleware"
 	"github.com/rhobs/rhobs-synthetics/pkg/api"
 )
 
@@ -14,11 +16,24 @@ func main() {
 	log.SetOutput(os.Stdout)
 
 	log.Println("Application starting up...")
+
+	swagger, err := api.GetSwagger()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading swagger spec\n: %s", err)
+		os.Exit(1)
+	}
+
+	swagger.Servers = nil
+
 	server := api.NewServer()
 
 	r := http.NewServeMux()
 
-	h := api.HandlerFromMux(server, r)
+	api.HandlerFromMux(server, r)
+
+	// Use validation middleware to check all requests against the
+	// OpenAPI schema.
+	h := middleware.OapiRequestValidator(swagger)(r)
 
 	s := &http.Server{
 		Handler: h,

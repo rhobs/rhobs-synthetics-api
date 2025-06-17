@@ -10,6 +10,8 @@ import (
 
 type Server struct{}
 
+var _ ServerInterface = (*Server)(nil)
+
 func NewServer() Server {
 	return Server{}
 }

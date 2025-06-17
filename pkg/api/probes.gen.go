@@ -6,13 +6,17 @@
 package api
 
 import (
-	"context"
-	"encoding/json"
+	"bytes"
+	"compress/gzip"
+	"encoding/base64"
 	"fmt"
 	"net/http"
+	"net/url"
+	"path"
+	"strings"
 
+	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/oapi-codegen/runtime"
-	strictnethttp "github.com/oapi-codegen/runtime/strictmiddleware/nethttp"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
@@ -356,250 +360,102 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	return m
 }
 
-type ListProbesRequestObject struct {
-	Params ListProbesParams
+// Base64 encoded, gzipped, json marshaled Swagger object
+var swaggerSpec = []string{
+
+	"H4sIAAAAAAAC/9xYW27bOBfeCsH/f5gBJFtylCbxWy7T1kDbeOLmqQhaWjqy2ZFIhaTcGoGB2cZsb1Yy",
+	"OKQlWbacG9JiMI+WePnO+S6kfEdjmRdSgDCaDu9owRTLwYCyv86zUhtQo2TMzHyMr/BpAjpWvDBcCjqk",
+	"H+dARhdEpsTMgbw9H5PYzSJGEgVGcViAfVcoOQWSStWjHoXvLC8yoEOaDE6CNATwX8WHkR9Ng9A/CeCV",
+	"nxwF4VF0nAbHhyH1KMfNCmbm1KOC5ThzvdFnnlCPKrgtuYKEDo0qwaM6nkPOEO//FaR0SP/Xb0rtu7e6",
+	"X1c4ccNXK6+uWo8VXzADv5eglnuqf80zLHW6JIUb3C/Kacbjqgm6Ry4gZWVmNPYjZZmGXlXNLS7clLNe",
+	"gT4Ve4Vzo4T3TLAZ5CBMXeDjqsjriTWNo4s2X+HBIAyS6MSPwnDgR4ME/GM4jP3gII2i48HJII6jPRU2",
+	"q39ucfe4ejuKqkteVYtY3Z4WfAJqAepaZZN67V3dno5HRNuB5PrqHUrTCnWNrV323JhCD/t9VvDe+qlf",
+	"DUyl7CWw0HOemp5UM+rRVKqcGTqkpcqoR82ywEW0UVzM6IbIkvvwlYLflkB4AsLwlINCmzHRctkv19ej",
+	"C+K2+/VZzmqglpaNvVi3hLYDeSQSHjMDmvB0s5GEaS1jzgwk5Bs384004LoyTgu69UmNZCplBkxYKAqY",
+	"gTHOvYLbErSxqaVkAcpwsOyzgjtSP2PvHxBVh1RW3mayPDVAvD0qf764vToZnh8ITTp+asdmu1neXotW",
+	"EG5qVuT0K8QG4f2mlFRXoAspNOzyAfh693EsE9jV0NuPH8dEG2ZKTXBESxZREGzIlQtzMGj0yoWBGSjL",
+	"AGjNZh2rn5J5mTPhK2AJm2ZALDayHt92z3uuNRczUrWO1GfjkHzpbNMXIhX5svF710zbVGAPGry7zd0a",
+	"71r5IAcfpHktS2FFx7LsMqXDT/dLp03hynsihxsMRe3+N/20piWJBC3+/vMvQ+A711gh1rhVzk33Efbc",
+	"qGyWIucPp+YxBCw4imI/DeHAj04Oj/wpHB360eAQXoVhGA0gekxq2novXUU7kK+gUKCRAsIIyiyrEjGW",
+	"IuWzUjEc2bPOe+Fw+0+G2ouFmaVNnyrFlvsjzVKlO/IFpyGFhnGB4SEFYCjkUlX8up20vQQayPVD9W/K",
+	"qHEKw412mrCG1REjSLtIZQfi8cjee2yrEPFZxuI/pvI7cY2wL68uJ6fWSefVrRYFz431y9Xby7MJmSyF",
+	"mYPhsa4mno5H1KMLUNrtFPSCXoglyAIEKzgd0oNe0DtAPpiZ20b0c/xgiHW/afAMrH2w+9YSo4QO6Tuu",
+	"jdvGzm6+WfbEXDOkf//VGJPvgQXu+TxY3SAfTjQW/CAIXEwKA8I4/xYZXpK4FP2vGhtz98jrb5cwLbHb",
+	"R1zGtbHpl2V1muDxZef3kIHoBWFtnRy7gEZiwTKe2HMUtGmOUcSC9/Yyz5la0iF9A4aw++Gj7thMb4od",
+	"o0TqDpFs3BXX34egzZlMli9We8dtdNX2JH6LrnZEEf5sUbizN7ZwE6LLOAat0zLLltscuJLwVBLwzTW9",
+	"q+crb9ur/bsmYlcuZzJw8d6m5cI+r2h5mnk7/pDo8Fy0G3Pry4fdeqsB5IMkay7W5oh+jDnqW9legoQ0",
+	"JMUh26y4niEr7hDJmYnnmNaFkgueQEJGF93W6IzPN+DS82w5Sn4QBz899863oqLp0fprs+rTv5ZkF38O",
+	"/HRZX1W7mbW3ZvdwW+uXFdeaKMis440ka7c2OVr/62R/r25W/wQAAP//a7itHgwUAAA=",
 }
 
-type ListProbesResponseObject interface {
-	VisitListProbesResponse(w http.ResponseWriter) error
-}
-
-type ListProbes200JSONResponse ProbesArrayResponse
-
-func (response ListProbes200JSONResponse) VisitListProbesResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type ListProbes400JSONResponse ErrorResponse
-
-func (response ListProbes400JSONResponse) VisitListProbesResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(400)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type CreateProbeRequestObject struct {
-	Body *CreateProbeJSONRequestBody
-}
-
-type CreateProbeResponseObject interface {
-	VisitCreateProbeResponse(w http.ResponseWriter) error
-}
-
-type CreateProbe201JSONResponse ProbesArrayResponse
-
-func (response CreateProbe201JSONResponse) VisitCreateProbeResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(201)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type DeleteProbeRequestObject struct {
-	ClusterId ClusterIdPathParam `json:"cluster_id"`
-}
-
-type DeleteProbeResponseObject interface {
-	VisitDeleteProbeResponse(w http.ResponseWriter) error
-}
-
-type DeleteProbe204Response struct {
-}
-
-func (response DeleteProbe204Response) VisitDeleteProbeResponse(w http.ResponseWriter) error {
-	w.WriteHeader(204)
-	return nil
-}
-
-type DeleteProbe404JSONResponse ErrorResponseNotFound
-
-func (response DeleteProbe404JSONResponse) VisitDeleteProbeResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(404)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type GetProbeByIdRequestObject struct {
-	ClusterId ClusterIdPathParam `json:"cluster_id"`
-}
-
-type GetProbeByIdResponseObject interface {
-	VisitGetProbeByIdResponse(w http.ResponseWriter) error
-}
-
-type GetProbeById200JSONResponse ProbesArrayResponse
-
-func (response GetProbeById200JSONResponse) VisitGetProbeByIdResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type GetProbeById404JSONResponse ErrorResponseNotFound
-
-func (response GetProbeById404JSONResponse) VisitGetProbeByIdResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(404)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-// StrictServerInterface represents all server handlers.
-type StrictServerInterface interface {
-	// Get a list of all configured probes
-	// (GET /metrics/probes)
-	ListProbes(ctx context.Context, request ListProbesRequestObject) (ListProbesResponseObject, error)
-	// Creates a new probe
-	// (POST /metrics/probes)
-	CreateProbe(ctx context.Context, request CreateProbeRequestObject) (CreateProbeResponseObject, error)
-	// Deletes a probe matching provided ID
-	// (DELETE /metrics/probes/{cluster_id})
-	DeleteProbe(ctx context.Context, request DeleteProbeRequestObject) (DeleteProbeResponseObject, error)
-	// Get a probe by Cluster ID
-	// (GET /metrics/probes/{cluster_id})
-	GetProbeById(ctx context.Context, request GetProbeByIdRequestObject) (GetProbeByIdResponseObject, error)
-}
-
-type StrictHandlerFunc = strictnethttp.StrictHTTPHandlerFunc
-type StrictMiddlewareFunc = strictnethttp.StrictHTTPMiddlewareFunc
-
-type StrictHTTPServerOptions struct {
-	RequestErrorHandlerFunc  func(w http.ResponseWriter, r *http.Request, err error)
-	ResponseErrorHandlerFunc func(w http.ResponseWriter, r *http.Request, err error)
-}
-
-func NewStrictHandler(ssi StrictServerInterface, middlewares []StrictMiddlewareFunc) ServerInterface {
-	return &strictHandler{ssi: ssi, middlewares: middlewares, options: StrictHTTPServerOptions{
-		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		},
-		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		},
-	}}
-}
-
-func NewStrictHandlerWithOptions(ssi StrictServerInterface, middlewares []StrictMiddlewareFunc, options StrictHTTPServerOptions) ServerInterface {
-	return &strictHandler{ssi: ssi, middlewares: middlewares, options: options}
-}
-
-type strictHandler struct {
-	ssi         StrictServerInterface
-	middlewares []StrictMiddlewareFunc
-	options     StrictHTTPServerOptions
-}
-
-// ListProbes operation middleware
-func (sh *strictHandler) ListProbes(w http.ResponseWriter, r *http.Request, params ListProbesParams) {
-	var request ListProbesRequestObject
-
-	request.Params = params
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.ListProbes(ctx, request.(ListProbesRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "ListProbes")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
+// GetSwagger returns the content of the embedded swagger specification file
+// or error if failed to decode
+func decodeSpec() ([]byte, error) {
+	zipped, err := base64.StdEncoding.DecodeString(strings.Join(swaggerSpec, ""))
 	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(ListProbesResponseObject); ok {
-		if err := validResponse.VisitListProbesResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+		return nil, fmt.Errorf("error base64 decoding spec: %w", err)
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(zipped))
+	if err != nil {
+		return nil, fmt.Errorf("error decompressing spec: %w", err)
+	}
+	var buf bytes.Buffer
+	_, err = buf.ReadFrom(zr)
+	if err != nil {
+		return nil, fmt.Errorf("error decompressing spec: %w", err)
+	}
+
+	return buf.Bytes(), nil
+}
+
+var rawSpec = decodeSpecCached()
+
+// a naive cached of a decoded swagger spec
+func decodeSpecCached() func() ([]byte, error) {
+	data, err := decodeSpec()
+	return func() ([]byte, error) {
+		return data, err
 	}
 }
 
-// CreateProbe operation middleware
-func (sh *strictHandler) CreateProbe(w http.ResponseWriter, r *http.Request) {
-	var request CreateProbeRequestObject
+// Constructs a synthetic filesystem for resolving external references when loading openapi specifications.
+func PathToRawSpec(pathToFile string) map[string]func() ([]byte, error) {
+	res := make(map[string]func() ([]byte, error))
+	if len(pathToFile) > 0 {
+		res[pathToFile] = rawSpec
+	}
 
-	var body CreateProbeJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+	return res
+}
+
+// GetSwagger returns the Swagger specification corresponding to the generated code
+// in this file. The external references of Swagger specification are resolved.
+// The logic of resolving external references is tightly connected to "import-mapping" feature.
+// Externally referenced files must be embedded in the corresponding golang packages.
+// Urls can be supported but this task was out of the scope.
+func GetSwagger() (swagger *openapi3.T, err error) {
+	resolvePath := PathToRawSpec("")
+
+	loader := openapi3.NewLoader()
+	loader.IsExternalRefsAllowed = true
+	loader.ReadFromURIFunc = func(loader *openapi3.Loader, url *url.URL) ([]byte, error) {
+		pathToFile := url.String()
+		pathToFile = path.Clean(pathToFile)
+		getSpec, ok := resolvePath[pathToFile]
+		if !ok {
+			err1 := fmt.Errorf("path not found: %s", pathToFile)
+			return nil, err1
+		}
+		return getSpec()
+	}
+	var specData []byte
+	specData, err = rawSpec()
+	if err != nil {
 		return
 	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.CreateProbe(ctx, request.(CreateProbeRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "CreateProbe")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
+	swagger, err = loader.LoadFromData(specData)
 	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(CreateProbeResponseObject); ok {
-		if err := validResponse.VisitCreateProbeResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+		return
 	}
-}
-
-// DeleteProbe operation middleware
-func (sh *strictHandler) DeleteProbe(w http.ResponseWriter, r *http.Request, clusterId ClusterIdPathParam) {
-	var request DeleteProbeRequestObject
-
-	request.ClusterId = clusterId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.DeleteProbe(ctx, request.(DeleteProbeRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "DeleteProbe")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(DeleteProbeResponseObject); ok {
-		if err := validResponse.VisitDeleteProbeResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// GetProbeById operation middleware
-func (sh *strictHandler) GetProbeById(w http.ResponseWriter, r *http.Request, clusterId ClusterIdPathParam) {
-	var request GetProbeByIdRequestObject
-
-	request.ClusterId = clusterId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetProbeById(ctx, request.(GetProbeByIdRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetProbeById")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetProbeByIdResponseObject); ok {
-		if err := validResponse.VisitGetProbeByIdResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
+	return
 }
