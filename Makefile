@@ -1,10 +1,3 @@
-unexport GOFLAGS
-
-GOOS?=linux
-GOARCH?=amd64
-GOENV=GOOS=${GOOS} GOARCH=${GOARCH} CGO_ENABLED=0 GOFLAGS=
-GOBUILDFLAGS=-gcflags="all=-trimpath=${GOPATH}" -asmflags="all=-trimpath=${GOPATH}"
-
 OAPI_CODEGEN_VERSION=v2.4.1
 
 # Default target
