@@ -1,0 +1,12 @@
+# See the OWNERS_ALIASES docs: https://git.k8s.io/community/contributors/guide/owners.md#OWNERS_ALIASES
+
+aliases:
+  rhobs-platform-sre:
+    - dustman9000
+    - jimdaga
+    - clcollins
+    - nephomaniac
+    - aliceh
+    - Mhodesty
+    - tnierman
+    - anispate
