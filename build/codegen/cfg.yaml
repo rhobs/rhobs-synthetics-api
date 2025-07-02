@@ -1,5 +1,5 @@
-package: api
-output: probes.gen.go
+package: v1
+output: ../../pkg/apis/v1/types.go
 generate:
   std-http-server: true
   strict-server: true

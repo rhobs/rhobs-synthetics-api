@@ -7,7 +7,8 @@ import (
 	"os"
 
 	middleware "github.com/oapi-codegen/nethttp-middleware"
-	"github.com/rhobs/rhobs-synthetics/pkg/api"
+	"github.com/rhobs/rhobs-synthetics-api/internal/api"
+	"github.com/rhobs/rhobs-synthetics-api/pkg/apis/v1"
 	"github.com/spf13/cobra"
 )
 
@@ -15,7 +16,7 @@ import (
 func runWebServer(addr string) error {
 	log.Printf("Starting web server on %s...", addr)
 
-	swagger, err := api.GetSwagger()
+	swagger, err := v1.GetSwagger()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading swagger spec\n: %s", err)
 	}
@@ -24,11 +25,11 @@ func runWebServer(addr string) error {
 
 	server := api.NewServer()
 
-	serverHandler := api.NewStrictHandler(server, nil)
+	serverHandler := v1.NewStrictHandler(server, nil)
 
 	r := http.NewServeMux()
 
-	api.HandlerFromMux(serverHandler, r)
+	v1.HandlerFromMux(serverHandler, r)
 
 	// Use validation middleware to check all requests against the OpenAPI schema.
 	h := middleware.OapiRequestValidator(swagger)(r)
