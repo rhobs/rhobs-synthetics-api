@@ -1,8 +1,8 @@
-openapi: 3.0.3
+openapi: 3.1.1
 info:
   title: RHOBS Synthetics Probes API
   version: 0.0.1
-  description: API for managing Blackbox Probes for ROSA HCP Clusters.
+  description: API for managing Blackbox Probes
 tags:
   - name: probes
     description: Operations related to metrics probes
@@ -14,16 +14,14 @@ paths:
       tags:
         - probes
       parameters:
-        - $ref: '#/components/parameters/ManagementClusterIdQueryParam'
-        - $ref: '#/components/parameters/ClusterIsPrivateQueryParam'
-          default: false
+        - $ref: '#/components/parameters/LabelSelectorQueryParam'
       responses:
         '200':
           description: A list of all configured probes.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProbesArrayResponse' # TODO: Add pagination and remote this
+                $ref: '#/components/schemas/ProbesArrayResponse'
         '400':
           description: Invalid request parameters.
           content:
@@ -47,36 +45,42 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProbesArrayResponse'
+                $ref: '#/components/schemas/ProbeObject' # Return single created object
+        '409':
+          description: A probe with the same static_url already exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
-  /metrics/probes/{cluster_id}:
+  /metrics/probes/{probe_id}:
     get:
-      summary: Get a probe by Cluster ID
+      summary: Get a probe by its ID
       operationId: getProbeById
       tags:
         - probes
       parameters:
-        - $ref: '#/components/parameters/ClusterIdPathParam'
+        - $ref: '#/components/parameters/ProbeIdPathParam'
       responses:
         "200":
           description: Configured probe matching the provided ID.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ProbesArrayResponse"
+                $ref: "#/components/schemas/ProbeObject"
         "404":
           description: Probe not found.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponseNotFound"
+                $ref: "#/components/schemas/ErrorResponse"
     delete:
       summary: Deletes a probe matching provided ID
       operationId: deleteProbe
       tags:
         - probes
       parameters:
-        - $ref: '#/components/parameters/ClusterIdPathParam'
+        - $ref: '#/components/parameters/ProbeIdPathParam'
       responses:
         '204':
           description: Probe deleted successfully. No content.
@@ -85,75 +89,61 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponseNotFound'
+                $ref: '#/components/schemas/ErrorResponse'
 
 components:
   parameters:
-    ManagementClusterIdQueryParam:
-        name: management_cluster_id
+    ProbeIdPathParam:
+      name: probe_id
+      in: path
+      required: true
+      description: The ID of the probe to retrieve.
+      schema:
+        $ref: '#/components/schemas/ProbeIdSchema'
+      example: d290f1ee-6c54-4b01-90e6-d701748f0851
+    LabelSelectorQueryParam:
+        name: label_selector
         in: query
-        description: Filter by management cluster ID.
+        description: A comma-separated list of key=value labels to filter on.
         schema:
-          $ref: '#/components/schemas/ManagementClusterIdSchema'
-        example: 13210d49-4112-42de-8e5c-03f448292cc4
-
-    ClusterIdPathParam:
-        name: cluster_id
-        in: path
-        required: true
-        description: The ID of the HCP cluster to retrieve the probe for.
-        schema:
-          $ref: '#/components/schemas/ClusterIdSchema'
-        example: d290f1ee-6c54-4b01-90e6-d701748f0851
-
-    ClusterIsPrivateQueryParam:
-        name: private
-        in: query
-        description: Filter by private/public clusters. Defaults to false.
-        schema:
-          $ref: '#/components/schemas/ClusterIsPrivateSchema'
+          type: string
+        example: "cluster_id=d290f1ee-6c54-4b01-90e6-d701748f0851,private=true"
 
   schemas:
-    ManagementClusterIdSchema:
+    ProbeIdSchema:
       type: string
       format: uuid
-      description: The unique identifier of an HCP Management Cluster (UUID format).
-      example: 8e0a074c-f1e3-4957-be75-425e611142e4
-
-    ClusterIdSchema:
-      type: string
-      format: uuid
-      description: The unique identifier of an HCP cluster (UUID format).
+      description: The unique identifier of a probe (UUID format).
       example: d290f1ee-6c54-4b01-90e6-d701748f0851
 
-    ApiServerUrlSchema:
+    StaticUrlSchema:
       type: string
       format: url
-      description: The API server URL for the cluster.
+      description: The static URL to be probed.
       example: https://api.example-cluster.foo.devshift.org
 
-    ClusterIsPrivateSchema:
-      type: boolean
-      description: Indicates if the cluster associated with the probe is private.
-      example: false
+    LabelsSchema:
+      type: object
+      description: A set of key-value pairs that can be used to organize and select probes.
+      additionalProperties:
+        type: string
+      example:
+        cluster_id: "d290f1ee-6c54-4b01-90e6-d701748f0851"
+        private: "true"
 
     ProbeObject:
       type: object
       description: Represents a single probe configuration.
       properties:
         id:
-          $ref: '#/components/schemas/ClusterIdSchema'
-        apiserver_url:
-          $ref: '#/components/schemas/ApiServerUrlSchema'
-        management_cluster_id:
-          $ref: '#/components/schemas/ManagementClusterIdSchema'
-        private:
-          $ref: '#/components/schemas/ClusterIsPrivateSchema'
+          $ref: '#/components/schemas/ProbeIdSchema'
+        static_url:
+          $ref: '#/components/schemas/StaticUrlSchema'
+        labels:
+          $ref: '#/components/schemas/LabelsSchema'
       required:
         - id
-        - apiserver_url
-        - management_cluster_id
-        - private
+        - static_url
 
     ProbesArrayResponse:
       type: object
@@ -169,19 +159,12 @@ components:
     CreateProbeRequest:
       type: object
       properties:
-        cluster_id:
-          $ref: '#/components/schemas/ClusterIdSchema'
-        apiserver_url:
-          $ref: '#/components/schemas/ApiServerUrlSchema'
-        management_cluster_id:
-          $ref: '#/components/schemas/ManagementClusterIdSchema'
-        private:
-          $ref: '#/components/schemas/ClusterIsPrivateSchema'
+        static_url:
+          $ref: '#/components/schemas/StaticUrlSchema'
+        labels:
+          $ref: '#/components/schemas/LabelsSchema'
       required:
-        - cluster_id
-        - apiserver_url
-        - management_cluster_id
-        - private
+        - static_url
 
     ErrorResponse:
       type: object
@@ -197,21 +180,4 @@ components:
             message:
               type: string
               description: A human-readable error message.
-              example: 'Missing required parameter: `management_cluster_id` or `cluster_id`'
-          required:
-            - code
-            - message
-      required:
-        - error
-
-    ErrorResponseNotFound:
-      allOf:
-        - $ref: '#/components/schemas/ErrorResponse'
-        - type: object
-          properties:
-            error:
-              properties:
-                code:
-                  example: 404
-                message:
-                  example: "Probe doesn’t exist"
+              example: 'Invalid label selector format'

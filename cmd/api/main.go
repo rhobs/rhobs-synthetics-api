@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -13,6 +14,11 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 // runWebServer starts the HTTP server.
@@ -25,9 +31,39 @@ func runWebServer(addr string) error {
 
 	swagger.Servers = nil
 
-	server := api.NewServer()
+	// Try to create in-cluster config
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		// If in-cluster fails, try to use kubeconfig
+		log.Printf("Could not create in-cluster config: %v. Trying to use kubeconfig.", err)
+		kubeconfigPath := viper.GetString("kubeconfig")
+		config, err = clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+		if err != nil {
+			return fmt.Errorf("failed to create kubernetes client config from kubeconfig: %w", err)
+		}
+	}
 
-	serverHandler := v1.NewStrictHandler(server, nil)
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("failed to create kubernetes client: %w", err)
+	}
+
+	namespace := viper.GetString("namespace")
+
+	// Check if the configured namespace exists before starting the server
+	log.Printf("Verifying that namespace %q exists...", namespace)
+	_, err = clientset.CoreV1().Namespaces().Get(context.Background(), namespace, metav1.GetOptions{})
+	if err != nil {
+		if k8serrors.IsNotFound(err) {
+			return fmt.Errorf("namespace %q does not exist. Please create it before running the application", namespace)
+		}
+		return fmt.Errorf("failed to verify if namespace %q exists: %w", namespace, err)
+	}
+	log.Printf("Namespace %q verified.", namespace)
+
+	server := api.NewServer(clientset, namespace)
+
+	serverHandler := v1.NewStrictHandler(&server, nil)
 
 	r := http.NewServeMux()
 
@@ -50,7 +86,6 @@ func runWebServer(addr string) error {
 func main() {
 
 	log.SetOutput(os.Stdout)
-	log.Println("Application starting up...")
 
 	// rootCmd represents the base command when called without any subcommands
 	var rootCmd = &cobra.Command{
@@ -69,7 +104,7 @@ func main() {
 		},
 	}
 
-	// apiCmd represents the 'start' subcommand
+	// startCmd represents the 'start' subcommand
 	var startCmd = &cobra.Command{
 		Use:   "start",
 		Short: "Start the API web server",
@@ -85,7 +120,9 @@ func main() {
 		},
 	}
 
-	// Add flags for the serve command
+	// General Config flags
+	startCmd.Flags().String("config", "", "Path to Viper config")
+	startCmd.Flags().String("log-level", "info", "Log verbosity: debug, info")
 
 	// API Server flags
 	startCmd.Flags().IntP("port", "p", 8080, "Port to run the server on (e.g., 8080)")
@@ -94,10 +131,8 @@ func main() {
 	startCmd.Flags().Duration("write-timeout", 10*time.Second, "Max duration before timing out writes")
 	startCmd.Flags().Duration("graceful-timeout", 15*time.Second, "Time allowed for graceful shutdown")
 	startCmd.Flags().String("database-engine", "etcd", "Specifies the backend database engine for persisting probe configurations (default: etcd)")
-
-	// General Config flags
-	startCmd.Flags().String("config", "", "Path to Viper config")
-	startCmd.Flags().String("log-level", "info", "Log verbosity: debug, info")
+	startCmd.Flags().String("kubeconfig", "", "Path to kubeconfig file (optional, for out-of-cluster development)")
+	startCmd.Flags().String("namespace", "default", "The Kubernetes namespace to store probe configmaps in.")
 
 	// Bind flags to viper
 	viper.BindPFlag("port", startCmd.Flags().Lookup("port"))
@@ -108,6 +143,8 @@ func main() {
 	viper.BindPFlag("database_engine", startCmd.Flags().Lookup("database-engine"))
 	viper.BindPFlag("config", startCmd.Flags().Lookup("config"))
 	viper.BindPFlag("log_level", startCmd.Flags().Lookup("log-level"))
+	viper.BindPFlag("kubeconfig", startCmd.Flags().Lookup("kubeconfig"))
+	viper.BindPFlag("namespace", startCmd.Flags().Lookup("namespace"))
 
 	// Add commands to the root command
 	rootCmd.AddCommand(startCmd)

@@ -23,65 +23,42 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
-// ApiServerUrlSchema The API server URL for the cluster.
-type ApiServerUrlSchema = string
-
-// ClusterIdSchema The unique identifier of an HCP cluster (UUID format).
-type ClusterIdSchema = openapi_types.UUID
-
-// ClusterIsPrivateSchema Indicates if the cluster associated with the probe is private.
-type ClusterIsPrivateSchema = bool
-
 // CreateProbeRequest defines model for CreateProbeRequest.
 type CreateProbeRequest struct {
-	// ApiserverUrl The API server URL for the cluster.
-	ApiserverUrl ApiServerUrlSchema `json:"apiserver_url"`
+	// Labels A set of key-value pairs that can be used to organize and select probes.
+	Labels *LabelsSchema `json:"labels,omitempty"`
 
-	// ClusterId The unique identifier of an HCP cluster (UUID format).
-	ClusterId ClusterIdSchema `json:"cluster_id"`
-
-	// ManagementClusterId The unique identifier of an HCP Management Cluster (UUID format).
-	ManagementClusterId ManagementClusterIdSchema `json:"management_cluster_id"`
-
-	// Private Indicates if the cluster associated with the probe is private.
-	Private ClusterIsPrivateSchema `json:"private"`
+	// StaticUrl The static URL to be probed.
+	StaticUrl StaticUrlSchema `json:"static_url"`
 }
 
 // ErrorResponse defines model for ErrorResponse.
 type ErrorResponse struct {
-	Error struct {
+	Error *struct {
 		// Code HTTP status code.
-		Code int32 `json:"code"`
+		Code *int32 `json:"code,omitempty"`
 
 		// Message A human-readable error message.
-		Message string `json:"message"`
-	} `json:"error"`
+		Message *string `json:"message,omitempty"`
+	} `json:"error,omitempty"`
 }
 
-// ErrorResponseNotFound defines model for ErrorResponseNotFound.
-type ErrorResponseNotFound struct {
-	Error struct {
-		Code    *interface{} `json:"code,omitempty"`
-		Message *interface{} `json:"message,omitempty"`
-	} `json:"error"`
-}
+// LabelsSchema A set of key-value pairs that can be used to organize and select probes.
+type LabelsSchema map[string]string
 
-// ManagementClusterIdSchema The unique identifier of an HCP Management Cluster (UUID format).
-type ManagementClusterIdSchema = openapi_types.UUID
+// ProbeIdSchema The unique identifier of a probe (UUID format).
+type ProbeIdSchema = openapi_types.UUID
 
 // ProbeObject Represents a single probe configuration.
 type ProbeObject struct {
-	// ApiserverUrl The API server URL for the cluster.
-	ApiserverUrl ApiServerUrlSchema `json:"apiserver_url"`
+	// Id The unique identifier of a probe (UUID format).
+	Id ProbeIdSchema `json:"id"`
 
-	// Id The unique identifier of an HCP cluster (UUID format).
-	Id ClusterIdSchema `json:"id"`
+	// Labels A set of key-value pairs that can be used to organize and select probes.
+	Labels *LabelsSchema `json:"labels,omitempty"`
 
-	// ManagementClusterId The unique identifier of an HCP Management Cluster (UUID format).
-	ManagementClusterId ManagementClusterIdSchema `json:"management_cluster_id"`
-
-	// Private Indicates if the cluster associated with the probe is private.
-	Private ClusterIsPrivateSchema `json:"private"`
+	// StaticUrl The static URL to be probed.
+	StaticUrl StaticUrlSchema `json:"static_url"`
 }
 
 // ProbesArrayResponse defines model for ProbesArrayResponse.
@@ -90,22 +67,19 @@ type ProbesArrayResponse struct {
 	Probes []ProbeObject `json:"probes"`
 }
 
-// ClusterIdPathParam The unique identifier of an HCP cluster (UUID format).
-type ClusterIdPathParam = ClusterIdSchema
+// StaticUrlSchema The static URL to be probed.
+type StaticUrlSchema = string
 
-// ClusterIsPrivateQueryParam Indicates if the cluster associated with the probe is private.
-type ClusterIsPrivateQueryParam = ClusterIsPrivateSchema
+// LabelSelectorQueryParam defines model for LabelSelectorQueryParam.
+type LabelSelectorQueryParam = string
 
-// ManagementClusterIdQueryParam The unique identifier of an HCP Management Cluster (UUID format).
-type ManagementClusterIdQueryParam = ManagementClusterIdSchema
+// ProbeIdPathParam The unique identifier of a probe (UUID format).
+type ProbeIdPathParam = ProbeIdSchema
 
 // ListProbesParams defines parameters for ListProbes.
 type ListProbesParams struct {
-	// ManagementClusterId Filter by management cluster ID.
-	ManagementClusterId *ManagementClusterIdQueryParam `form:"management_cluster_id,omitempty" json:"management_cluster_id,omitempty"`
-
-	// Private Filter by private/public clusters. Defaults to false.
-	Private *ClusterIsPrivateQueryParam `form:"private,omitempty" json:"private,omitempty"`
+	// LabelSelector A comma-separated list of key=value labels to filter on.
+	LabelSelector *LabelSelectorQueryParam `form:"label_selector,omitempty" json:"label_selector,omitempty"`
 }
 
 // CreateProbeJSONRequestBody defines body for CreateProbe for application/json ContentType.
@@ -120,11 +94,11 @@ type ServerInterface interface {
 	// (POST /metrics/probes)
 	CreateProbe(w http.ResponseWriter, r *http.Request)
 	// Deletes a probe matching provided ID
-	// (DELETE /metrics/probes/{cluster_id})
-	DeleteProbe(w http.ResponseWriter, r *http.Request, clusterId ClusterIdPathParam)
-	// Get a probe by Cluster ID
-	// (GET /metrics/probes/{cluster_id})
-	GetProbeById(w http.ResponseWriter, r *http.Request, clusterId ClusterIdPathParam)
+	// (DELETE /metrics/probes/{probe_id})
+	DeleteProbe(w http.ResponseWriter, r *http.Request, probeId ProbeIdPathParam)
+	// Get a probe by its ID
+	// (GET /metrics/probes/{probe_id})
+	GetProbeById(w http.ResponseWriter, r *http.Request, probeId ProbeIdPathParam)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -144,19 +118,11 @@ func (siw *ServerInterfaceWrapper) ListProbes(w http.ResponseWriter, r *http.Req
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ListProbesParams
 
-	// ------------- Optional query parameter "management_cluster_id" -------------
+	// ------------- Optional query parameter "label_selector" -------------
 
-	err = runtime.BindQueryParameter("form", true, false, "management_cluster_id", r.URL.Query(), &params.ManagementClusterId)
+	err = runtime.BindQueryParameter("form", true, false, "label_selector", r.URL.Query(), &params.LabelSelector)
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "management_cluster_id", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "private" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "private", r.URL.Query(), &params.Private)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "label_selector", Err: err})
 		return
 	}
 
@@ -190,17 +156,17 @@ func (siw *ServerInterfaceWrapper) DeleteProbe(w http.ResponseWriter, r *http.Re
 
 	var err error
 
-	// ------------- Path parameter "cluster_id" -------------
-	var clusterId ClusterIdPathParam
+	// ------------- Path parameter "probe_id" -------------
+	var probeId ProbeIdPathParam
 
-	err = runtime.BindStyledParameterWithOptions("simple", "cluster_id", r.PathValue("cluster_id"), &clusterId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	err = runtime.BindStyledParameterWithOptions("simple", "probe_id", r.PathValue("probe_id"), &probeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cluster_id", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "probe_id", Err: err})
 		return
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteProbe(w, r, clusterId)
+		siw.Handler.DeleteProbe(w, r, probeId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -215,17 +181,17 @@ func (siw *ServerInterfaceWrapper) GetProbeById(w http.ResponseWriter, r *http.R
 
 	var err error
 
-	// ------------- Path parameter "cluster_id" -------------
-	var clusterId ClusterIdPathParam
+	// ------------- Path parameter "probe_id" -------------
+	var probeId ProbeIdPathParam
 
-	err = runtime.BindStyledParameterWithOptions("simple", "cluster_id", r.PathValue("cluster_id"), &clusterId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	err = runtime.BindStyledParameterWithOptions("simple", "probe_id", r.PathValue("probe_id"), &probeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cluster_id", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "probe_id", Err: err})
 		return
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetProbeById(w, r, clusterId)
+		siw.Handler.GetProbeById(w, r, probeId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -357,8 +323,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 
 	m.HandleFunc("GET "+options.BaseURL+"/metrics/probes", wrapper.ListProbes)
 	m.HandleFunc("POST "+options.BaseURL+"/metrics/probes", wrapper.CreateProbe)
-	m.HandleFunc("DELETE "+options.BaseURL+"/metrics/probes/{cluster_id}", wrapper.DeleteProbe)
-	m.HandleFunc("GET "+options.BaseURL+"/metrics/probes/{cluster_id}", wrapper.GetProbeById)
+	m.HandleFunc("DELETE "+options.BaseURL+"/metrics/probes/{probe_id}", wrapper.DeleteProbe)
+	m.HandleFunc("GET "+options.BaseURL+"/metrics/probes/{probe_id}", wrapper.GetProbeById)
 
 	return m
 }
@@ -397,7 +363,7 @@ type CreateProbeResponseObject interface {
 	VisitCreateProbeResponse(w http.ResponseWriter) error
 }
 
-type CreateProbe201JSONResponse ProbesArrayResponse
+type CreateProbe201JSONResponse ProbeObject
 
 func (response CreateProbe201JSONResponse) VisitCreateProbeResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
@@ -406,8 +372,17 @@ func (response CreateProbe201JSONResponse) VisitCreateProbeResponse(w http.Respo
 	return json.NewEncoder(w).Encode(response)
 }
 
+type CreateProbe409JSONResponse ErrorResponse
+
+func (response CreateProbe409JSONResponse) VisitCreateProbeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type DeleteProbeRequestObject struct {
-	ClusterId ClusterIdPathParam `json:"cluster_id"`
+	ProbeId ProbeIdPathParam `json:"probe_id"`
 }
 
 type DeleteProbeResponseObject interface {
@@ -422,7 +397,7 @@ func (response DeleteProbe204Response) VisitDeleteProbeResponse(w http.ResponseW
 	return nil
 }
 
-type DeleteProbe404JSONResponse ErrorResponseNotFound
+type DeleteProbe404JSONResponse ErrorResponse
 
 func (response DeleteProbe404JSONResponse) VisitDeleteProbeResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
@@ -432,14 +407,14 @@ func (response DeleteProbe404JSONResponse) VisitDeleteProbeResponse(w http.Respo
 }
 
 type GetProbeByIdRequestObject struct {
-	ClusterId ClusterIdPathParam `json:"cluster_id"`
+	ProbeId ProbeIdPathParam `json:"probe_id"`
 }
 
 type GetProbeByIdResponseObject interface {
 	VisitGetProbeByIdResponse(w http.ResponseWriter) error
 }
 
-type GetProbeById200JSONResponse ProbesArrayResponse
+type GetProbeById200JSONResponse ProbeObject
 
 func (response GetProbeById200JSONResponse) VisitGetProbeByIdResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
@@ -448,7 +423,7 @@ func (response GetProbeById200JSONResponse) VisitGetProbeByIdResponse(w http.Res
 	return json.NewEncoder(w).Encode(response)
 }
 
-type GetProbeById404JSONResponse ErrorResponseNotFound
+type GetProbeById404JSONResponse ErrorResponse
 
 func (response GetProbeById404JSONResponse) VisitGetProbeByIdResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
@@ -466,10 +441,10 @@ type StrictServerInterface interface {
 	// (POST /metrics/probes)
 	CreateProbe(ctx context.Context, request CreateProbeRequestObject) (CreateProbeResponseObject, error)
 	// Deletes a probe matching provided ID
-	// (DELETE /metrics/probes/{cluster_id})
+	// (DELETE /metrics/probes/{probe_id})
 	DeleteProbe(ctx context.Context, request DeleteProbeRequestObject) (DeleteProbeResponseObject, error)
-	// Get a probe by Cluster ID
-	// (GET /metrics/probes/{cluster_id})
+	// Get a probe by its ID
+	// (GET /metrics/probes/{probe_id})
 	GetProbeById(ctx context.Context, request GetProbeByIdRequestObject) (GetProbeByIdResponseObject, error)
 }
 
@@ -560,10 +535,10 @@ func (sh *strictHandler) CreateProbe(w http.ResponseWriter, r *http.Request) {
 }
 
 // DeleteProbe operation middleware
-func (sh *strictHandler) DeleteProbe(w http.ResponseWriter, r *http.Request, clusterId ClusterIdPathParam) {
+func (sh *strictHandler) DeleteProbe(w http.ResponseWriter, r *http.Request, probeId ProbeIdPathParam) {
 	var request DeleteProbeRequestObject
 
-	request.ClusterId = clusterId
+	request.ProbeId = probeId
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.DeleteProbe(ctx, request.(DeleteProbeRequestObject))
@@ -586,10 +561,10 @@ func (sh *strictHandler) DeleteProbe(w http.ResponseWriter, r *http.Request, clu
 }
 
 // GetProbeById operation middleware
-func (sh *strictHandler) GetProbeById(w http.ResponseWriter, r *http.Request, clusterId ClusterIdPathParam) {
+func (sh *strictHandler) GetProbeById(w http.ResponseWriter, r *http.Request, probeId ProbeIdPathParam) {
 	var request GetProbeByIdRequestObject
 
-	request.ClusterId = clusterId
+	request.ProbeId = probeId
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.GetProbeById(ctx, request.(GetProbeByIdRequestObject))
@@ -614,29 +589,27 @@ func (sh *strictHandler) GetProbeById(w http.ResponseWriter, r *http.Request, cl
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"H4sIAAAAAAAC/8xXW2/bNhT+KwS3hw2Qb617M9CHpBlaA8XiJc1TUQS0eGSxpUiFPHLrGfrvwyEl36Ss",
+	"7dBle7REk98534VHW57aorQGDHo+2/JSOFEAggu/3ool6GvQkKJ1f1TgNgt6T68k+NSpEpU1fMbPWGqL",
+	"Qgw80AYIkmnlkdmMfYLNy7XQFTBNm3mGlmVKIzhmzZAnHL6IotTAZzzVlUdwt0q+lI9ejLMJwOBp+mQ6",
+	"mC7Hk8GLMTwdyGfjybPp82z8/MkkKZ1aC4SX6CrgCVcE5I5A8oQbUdCW4cxb31TAE+7THApBBeCmpBUe",
+	"nTIrXtcJXzi7hLlcCMzvKfNdDmx+QWVhDqyk9VSPA3QK1nBczrfU0MIuBeZ71GHjWyV5wh3cVcqB5DOq",
+	"8hD/zw4yPuM/jfYEjuJbP2oquY6LayqueUX/fOVAIIQ1V3BXgcfAvLMlOFQQ1kSyvnZO0Idvj0m4R4Eq",
+	"va2c/to/r8PKG6d3GA9rfX+404ek5couP0KKdNBvzll3Bb60xkMXPdDr7uPUSuiS+ubduwWj8yrPaMUR",
+	"i9PxOOGZdYVAPuPK4ONHfIdHGYQVOAJUgPdiBX3OyKtCmIEDIcVSAwvYWLP+WDFzsxZayegU1qqWNccn",
+	"PZI9aUzd06ojjmZbLqRUhE3oxVFzTjZPOnV4aA09iIYuhXKeYS6QpcKwJbDKgyRDWLcSRv0JTBjZ1BHd",
+	"4o8K3h5Y/tsN09iez3gwfl/Nx/rvtXFl1F0FTEkwqDJFcZQx0Xj6l5ub+UXT91//kat3kqmq4ONOdwPE",
+	"y4i4A/AKSgeeDMME88qsdJs2qTWZWlVO0Mph6MYhidTH74qG5D93emjPV+weQPsz58TmftNHgfU4kP5G",
+	"jUOhjDIrZg0wsqB1bVfjSUGcCqHw39TEyx28Bq+ggzr1NbD6yjptTa9QY2vYzdVbctaygSyPVZkjln42",
+	"GolSDZung8Zbw8zaoYS1z1WGQ+tWR+p0uidXarqVMtvTysWcXMEKYcSKWnmuRfppab+wyBDtpTAgunpz",
+	"eX7NrjcGc0CV+mYFO1vMecLX4HzccjwcDyfUDFuCEaXiM/54OBkGowvMAxWjgi7Y1I/2FK8g2Ib4D1aY",
+	"U4C8VR53QA4nmff9dO6XjO6bdOoPxGaUXDj40XgcrxKDYAIGUZZapQHF6KOnorbfc02fyDp0/zR622FK",
+	"aL1LAJC7SK0TPv2BsI4v1x5A7T3l4vTA9n0cBvn7qiiE2/AZfw3IxN/DJ82IlT+0Sp3w0voegg8ml2Y2",
+	"Ao/nVm5+WO09s1F97Gi6dOqOKCY/VhRttnR7v4jXQIApma/SFLzPKq03jQ5ePJwOzpr4/KwwDxOxF0Ub",
+	"WJTlTGgaezYMviiPHXHEXtMVZ+Bz3KpPDHVyGgCjbTsh1zGjNCB01XIRnrdq+b486HwL9ATBtBuQkZ0I",
+	"6IQd9rtlDS0NU9OHYyriMhZZZisjT5mInfK7+acQmOaU76WzayVBsvlFv097c/g1xBg+38zlv9L58UO5",
+	"7dVJWu0703wAtt3531EakzeCXm6YQn8Ph+GjIT48VfNly6pnDnQIHLSs8eI+vg+/Wj2vP9R/BQAA//9L",
+	"SdvdVRAAAA==",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file
