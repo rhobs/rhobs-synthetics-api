@@ -26,7 +26,7 @@ Flag | Type | Default | Description
 `--read-timeout` | duration | `5s` | Max duration for reading the entire request
 `--write-timeout` | duration | `10s` | Max duration before timing out writes
 `--graceful-timeout` | duration | `15s` | Time allowed for graceful shutdown
-`--database-engine` | string | `"etcd"` | Backend database engine (e.g., etcd, Postgres)
+`--database-engine` | string | `"etcd"` | Backend database engine (e.g., etcd, postgres)
 `--log-level` | string | `"info"` | Log verbosity: debug, info (`debug`, `info`)
 `--config` | string | `(none)` | Path to YAML config file
 `--kubeconfig` | string | `(none)` | Path to kubeconfig file (optional, for out-of-cluster development)

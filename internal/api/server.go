@@ -173,7 +173,14 @@ func (s Server) CreateProbe(ctx context.Context, request v1.CreateProbeRequestOb
 	// Create the config map in Kubernetes
 	_, err = s.KubeClient.CoreV1().ConfigMaps(s.Namespace).Create(ctx, configMap, metav1.CreateOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create config map: %w", err)
+		return v1.CreateProbe500JSONResponse{
+			Error: &struct {
+				Code    *int32  `json:"code,omitempty"`
+				Message *string `json:"message,omitempty"`
+			}{
+				Code: int32p(500),
+			},
+		}, nil
 	}
 
 	log.Printf("Successfully created probe and config map for probe ID: %s", probeID)
