@@ -61,7 +61,8 @@ func runWebServer(addr string) error {
 	}
 	log.Printf("Namespace %q verified.", namespace)
 
-	server := api.NewServer(clientset, namespace)
+	store := api.NewKubernetesProbeStore(clientset, namespace)
+	server := api.NewServer(store)
 
 	serverHandler := v1.NewStrictHandler(&server, nil)
 
