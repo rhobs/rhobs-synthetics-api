@@ -79,7 +79,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: "#/components/schemas/WarningResponse"
     delete:
       summary: Deletes a probe matching provided ID
       operationId: deleteProbe
@@ -95,7 +95,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: '#/components/schemas/WarningResponse'
 
 components:
   parameters:
@@ -172,18 +172,38 @@ components:
       required:
         - static_url
 
+    ErrorObject:
+      type: object
+      properties:
+        message:
+          type: string
+          description: A human-readable error message.
+          example: 'Invalid label selector format'
+      required:
+        - message
+
     ErrorResponse:
       type: object
       properties:
         error:
-          type: object
-          properties:
-            code:
-              type: integer
-              format: int32
-              description: HTTP status code.
-              example: 400
-            message:
-              type: string
-              description: A human-readable error message.
-              example: 'Invalid label selector format'
+          $ref: '#/components/schemas/ErrorObject'
+      required:
+        - error
+
+    WarningObject:
+      type: object
+      properties:
+        message:
+          type: string
+          description: A human-readable error message indicating the resource was not found.
+          example: "Probe with ID 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' not found"
+      required:
+        - message
+
+    WarningResponse:
+      type: object
+      properties:
+        warning:
+          $ref: '#/components/schemas/WarningObject'
+      required:
+        - warning

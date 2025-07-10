@@ -160,12 +160,8 @@ func (s Server) ListProbes(ctx context.Context, request v1.ListProbesRequestObje
 		_, err := labels.Parse(userSelector)
 		if err != nil {
 			return v1.ListProbes400JSONResponse{
-				Error: &struct {
-					Code    *int32  `json:"code,omitempty"`
-					Message *string `json:"message,omitempty"`
-				}{
-					Code:    int32p(400),
-					Message: stringp(fmt.Sprintf("invalid label_selector: %v", err)),
+				Error: v1.ErrorObject{
+					Message: fmt.Sprintf("invalid label_selector: %v", err),
 				},
 			}, nil
 		}
@@ -186,12 +182,8 @@ func (s Server) GetProbeById(ctx context.Context, request v1.GetProbeByIdRequest
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
 			return v1.GetProbeById404JSONResponse{
-				Error: &struct {
-					Code    *int32  `json:"code,omitempty"`
-					Message *string `json:"message,omitempty"`
-				}{
-					Code:    int32p(404),
-					Message: stringp(fmt.Sprintf("probe with ID %s not found", request.ProbeId)),
+				Warning: v1.WarningObject{
+					Message: fmt.Sprintf("probe with ID %s not found", request.ProbeId),
 				},
 			}, nil
 		}
@@ -213,12 +205,8 @@ func (s Server) CreateProbe(ctx context.Context, request v1.CreateProbeRequestOb
 
 	if exists {
 		return v1.CreateProbe409JSONResponse{
-			Error: &struct {
-				Code    *int32  `json:"code,omitempty"`
-				Message *string `json:"message,omitempty"`
-			}{
-				Code:    int32p(409),
-				Message: stringp(fmt.Sprintf("a probe for static_url %q already exists", request.Body.StaticUrl)),
+			Error: v1.ErrorObject{
+				Message: fmt.Sprintf("a probe for static_url %q already exists", request.Body.StaticUrl),
 			},
 		}, nil
 	}
@@ -232,12 +220,8 @@ func (s Server) CreateProbe(ctx context.Context, request v1.CreateProbeRequestOb
 	createdProbe, err := s.Store.CreateProbe(ctx, probeToStore, urlHashString)
 	if err != nil {
 		return v1.CreateProbe500JSONResponse{
-			Error: &struct {
-				Code    *int32  `json:"code,omitempty"`
-				Message *string `json:"message,omitempty"`
-			}{
-				Code:    int32p(500),
-				Message: stringp(fmt.Sprintf("failed to create probe: %v", err)),
+			Error: v1.ErrorObject{
+				Message: fmt.Sprintf("failed to create probe: %v", err),
 			},
 		}, nil
 	}
@@ -252,12 +236,8 @@ func (s Server) DeleteProbe(ctx context.Context, request v1.DeleteProbeRequestOb
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
 			return v1.DeleteProbe404JSONResponse{
-				Error: &struct {
-					Code    *int32  `json:"code,omitempty"`
-					Message *string `json:"message,omitempty"`
-				}{
-					Code:    int32p(404),
-					Message: stringp(fmt.Sprintf("probe with ID %s not found", request.ProbeId)),
+				Warning: v1.WarningObject{
+					Message: fmt.Sprintf("probe with ID %s not found", request.ProbeId),
 				},
 			}, nil
 		}
@@ -266,14 +246,4 @@ func (s Server) DeleteProbe(ctx context.Context, request v1.DeleteProbeRequestOb
 
 	log.Printf("Successfully deleted probe for probe ID: %s", request.ProbeId)
 	return v1.DeleteProbe204Response{}, nil
-}
-
-// helper function to create a pointer to a string
-func stringp(s string) *string {
-	return &s
-}
-
-// helper function to create a pointer to an int32
-func int32p(i int32) *int32 {
-	return &i
 }
