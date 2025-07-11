@@ -10,12 +10,11 @@ import (
 
 	middleware "github.com/oapi-codegen/nethttp-middleware"
 	"github.com/rhobs/rhobs-synthetics-api/internal/api"
+	"github.com/rhobs/rhobs-synthetics-api/internal/probestore"
 	v1 "github.com/rhobs/rhobs-synthetics-api/pkg/apis/v1"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -50,18 +49,10 @@ func runWebServer(addr string) error {
 
 	namespace := viper.GetString("namespace")
 
-	// Check if the configured namespace exists before starting the server
-	log.Printf("Verifying that namespace %q exists...", namespace)
-	_, err = clientset.CoreV1().Namespaces().Get(context.Background(), namespace, metav1.GetOptions{})
+	store, err := probestore.NewKubernetesProbeStore(context.Background(), clientset, namespace)
 	if err != nil {
-		if k8serrors.IsNotFound(err) {
-			return fmt.Errorf("namespace %q does not exist. Please create it before running the application", namespace)
-		}
-		return fmt.Errorf("failed to verify if namespace %q exists: %w", namespace, err)
+		return fmt.Errorf("failed to create probe store: %w", err)
 	}
-	log.Printf("Namespace %q verified.", namespace)
-
-	store := api.NewKubernetesProbeStore(clientset, namespace)
 	server := api.NewServer(store)
 
 	serverHandler := v1.NewStrictHandler(&server, nil)
