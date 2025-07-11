@@ -2,107 +2,131 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"log"
 
 	"github.com/google/uuid"
-	"github.com/rhobs/rhobs-synthetics-api/pkg/apis/v1"
+	"github.com/rhobs/rhobs-synthetics-api/internal/probestore"
+	v1 "github.com/rhobs/rhobs-synthetics-api/pkg/apis/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
-type Server struct{}
+const (
+	baseAppLabelKey   = "app"
+	baseAppLabelValue = "rhobs-synthetics-probe"
+)
 
-func NewServer() Server {
-	return Server{}
+// Server is the main API server object.
+type Server struct {
+	Store probestore.ProbeStorage
+}
+
+// NewServer creates a new API server.
+func NewServer(store probestore.ProbeStorage) Server {
+	return Server{
+		Store: store,
+	}
 }
 
 // (GET /metrics/probes)
-func (Server) ListProbes(ctx context.Context, request v1.ListProbesRequestObject) (v1.ListProbesResponseObject, error) {
-	// Fake respone while we wire things together
-	clusterId, err := uuid.Parse("957c5277-f74c-4b24-938a-f70bab28aab5")
+func (s Server) ListProbes(ctx context.Context, request v1.ListProbesRequestObject) (v1.ListProbesResponseObject, error) {
+	baseSelector := fmt.Sprintf("%s=%s", baseAppLabelKey, baseAppLabelValue)
+	finalSelector := baseSelector
+
+	// If the user provided a selector, validate and append it
+	if request.Params.LabelSelector != nil && *request.Params.LabelSelector != "" {
+		userSelector := *request.Params.LabelSelector
+		// Validate the user-provided selector syntax
+		_, err := labels.Parse(userSelector)
+		if err != nil {
+			return v1.ListProbes400JSONResponse{
+				Error: v1.ErrorObject{
+					Message: fmt.Sprintf("invalid label_selector: %v", err),
+				},
+			}, nil
+		}
+		finalSelector = fmt.Sprintf("%s,%s", baseSelector, userSelector)
+	}
+
+	probes, err := s.Store.ListProbes(ctx, finalSelector)
 	if err != nil {
-		return v1.ListProbes400JSONResponse{
-			Error: struct {
-				Code    int32  `json:"code"`
-				Message string `json:"message"`
-			}{
-				Code:    400,
-				Message: "Invalid Cluster ID",
-			},
-		}, nil
+		return nil, fmt.Errorf("failed to list probes from storage: %w", err)
 	}
 
-	managementClusterId, err := uuid.Parse("957c5277-f74c-4b24-938a-f70bab28aab5")
-	if err != nil {
-		return v1.ListProbes400JSONResponse{
-			Error: struct {
-				Code    int32  `json:"code"`
-				Message string `json:"message"`
-			}{
-				Code:    400,
-				Message: "Invalid Management Cluster ID",
-			},
-		}, nil
-	}
-	dummyProbe := v1.ProbeObject{
-		Id:                  clusterId,
-		ApiserverUrl:        "https://v1.example.com/cluster-1",
-		ManagementClusterId: managementClusterId,
-		Private:             false,
-	}
-
-	responseStruct := v1.ProbesArrayResponse{
-		Probes: []v1.ProbeObject{
-			dummyProbe,
-		},
-	}
-
-	return v1.ListProbes200JSONResponse(responseStruct), nil
+	return v1.ListProbes200JSONResponse(v1.ProbesArrayResponse{Probes: probes}), nil
 }
 
-// (GET /metrics/probe/{cluster_id})
-func (Server) GetProbeById(ctx context.Context, request v1.GetProbeByIdRequestObject) (v1.GetProbeByIdResponseObject, error) {
-	// Fake respone while we wire things together
-	managementClusterId, err := uuid.Parse("957c5277-f74c-4b24-938a-f70bab28aab5")
+// (GET /metrics/probes/{probe_id})
+func (s Server) GetProbeById(ctx context.Context, request v1.GetProbeByIdRequestObject) (v1.GetProbeByIdResponseObject, error) {
+	probe, err := s.Store.GetProbe(ctx, request.ProbeId)
 	if err != nil {
-		return v1.GetProbeById404JSONResponse{}, nil
-	}
-	dummyProbe := v1.ProbeObject{
-		Id:                  request.ClusterId,
-		ApiserverUrl:        "https://v1.example.com/cluster-1",
-		ManagementClusterId: managementClusterId,
-		Private:             false,
-	}
-
-	responseStruct := v1.ProbesArrayResponse{
-		Probes: []v1.ProbeObject{
-			dummyProbe,
-		},
+		if k8serrors.IsNotFound(err) {
+			return v1.GetProbeById404JSONResponse{
+				Warning: v1.WarningObject{
+					Message: fmt.Sprintf("probe with ID %s not found", request.ProbeId),
+				},
+			}, nil
+		}
+		return nil, fmt.Errorf("failed to get probe from storage: %w", err)
 	}
 
-	return v1.GetProbeById200JSONResponse(responseStruct), nil
+	return v1.GetProbeById200JSONResponse(*probe), nil
 }
 
 // (POST /metrics/probes)
-func (Server) CreateProbe(ctx context.Context, request v1.CreateProbeRequestObject) (v1.CreateProbeResponseObject, error) {
+func (s Server) CreateProbe(ctx context.Context, request v1.CreateProbeRequestObject) (v1.CreateProbeResponseObject, error) {
+	urlHash := sha256.Sum256([]byte(request.Body.StaticUrl))
+	urlHashString := hex.EncodeToString(urlHash[:])[:63]
 
-	createdProbe := v1.ProbeObject{
-		Id:                  request.Body.ClusterId,
-		ApiserverUrl:        request.Body.ApiserverUrl,
-		ManagementClusterId: request.Body.ManagementClusterId,
-		Private:             request.Body.Private,
+	exists, err := s.Store.ProbeWithURLHashExists(ctx, urlHashString)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check for existing probes: %w", err)
 	}
 
-	responseBody := v1.ProbesArrayResponse{
-		Probes: []v1.ProbeObject{createdProbe},
+	if exists {
+		return v1.CreateProbe409JSONResponse{
+			Error: v1.ErrorObject{
+				Message: fmt.Sprintf("a probe for static_url %q already exists", request.Body.StaticUrl),
+			},
+		}, nil
 	}
 
-	log.Printf("Successfully created probe for cluster ID: %s", createdProbe.Id)
-	return v1.CreateProbe201JSONResponse(responseBody), nil
+	probeToStore := v1.ProbeObject{
+		Id:        uuid.New(),
+		StaticUrl: request.Body.StaticUrl,
+		Labels:    request.Body.Labels,
+	}
+
+	createdProbe, err := s.Store.CreateProbe(ctx, probeToStore, urlHashString)
+	if err != nil {
+		return v1.CreateProbe500JSONResponse{
+			Error: v1.ErrorObject{
+				Message: fmt.Sprintf("failed to create probe: %v", err),
+			},
+		}, nil
+	}
+
+	log.Printf("Successfully created probe and config map for probe ID: %s", createdProbe.Id)
+	return v1.CreateProbe201JSONResponse(*createdProbe), nil
 }
 
-// (DELETE /metrics/probe/{cluster_id})
-func (Server) DeleteProbe(ctx context.Context, request v1.DeleteProbeRequestObject) (v1.DeleteProbeResponseObject, error) {
-	// Fake respone while we wire things together
-	clusterId := request.ClusterId
-	log.Printf("Successfully deleted probe for cluster ID: %s", clusterId)
+// (DELETE /metrics/probes/{probe_id})
+func (s Server) DeleteProbe(ctx context.Context, request v1.DeleteProbeRequestObject) (v1.DeleteProbeResponseObject, error) {
+	err := s.Store.DeleteProbe(ctx, request.ProbeId)
+	if err != nil {
+		if k8serrors.IsNotFound(err) {
+			return v1.DeleteProbe404JSONResponse{
+				Warning: v1.WarningObject{
+					Message: fmt.Sprintf("probe with ID %s not found", request.ProbeId),
+				},
+			}, nil
+		}
+		return nil, fmt.Errorf("failed to delete probe from storage: %w", err)
+	}
+
+	log.Printf("Successfully deleted probe for probe ID: %s", request.ProbeId)
 	return v1.DeleteProbe204Response{}, nil
 }
