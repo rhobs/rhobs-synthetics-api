@@ -4,7 +4,15 @@ This application provides a synthetic monitoring API to be used within the RHOBS
 
 ---
 
-## 🚀 Getting Started
+## Building
+
+Build the `rhobs-synthetics-api` binary:
+
+```sh
+make build
+```
+
+## Running
 
 Run the API server locally using:
 ```sh
