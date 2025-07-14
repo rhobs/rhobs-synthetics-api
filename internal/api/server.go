@@ -98,6 +98,7 @@ func (s Server) CreateProbe(ctx context.Context, request v1.CreateProbeRequestOb
 		Id:        uuid.New(),
 		StaticUrl: request.Body.StaticUrl,
 		Labels:    request.Body.Labels,
+		Status:    v1.Pending, // Default status to pending
 	}
 
 	createdProbe, err := s.Store.CreateProbe(ctx, probeToStore, urlHashString)
@@ -111,6 +112,35 @@ func (s Server) CreateProbe(ctx context.Context, request v1.CreateProbeRequestOb
 
 	log.Printf("Successfully created probe and config map for probe ID: %s", createdProbe.Id)
 	return v1.CreateProbe201JSONResponse(*createdProbe), nil
+}
+
+// (PATCH /metrics/probes/{probe_id})
+func (s Server) UpdateProbe(ctx context.Context, request v1.UpdateProbeRequestObject) (v1.UpdateProbeResponseObject, error) {
+	// First, get the existing probe.
+	existingProbe, err := s.Store.GetProbe(ctx, request.ProbeId)
+	if err != nil {
+		if k8serrors.IsNotFound(err) {
+			return v1.UpdateProbe404JSONResponse{
+				Warning: v1.WarningObject{
+					Message: fmt.Sprintf("probe with ID %s not found", request.ProbeId),
+				},
+			}, nil
+		}
+		return nil, fmt.Errorf("failed to get probe from storage for update: %w", err)
+	}
+
+	// Now, update the fields from the request.
+	if request.Body.Status != nil {
+		existingProbe.Status = *request.Body.Status
+	}
+
+	// Persist the updated probe.
+	updatedProbe, err := s.Store.UpdateProbe(ctx, *existingProbe)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update probe in storage: %w", err)
+	}
+
+	return v1.UpdateProbe200JSONResponse(*updatedProbe), nil
 }
 
 // (DELETE /metrics/probes/{probe_id})

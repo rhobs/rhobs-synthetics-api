@@ -179,9 +179,12 @@ components:
           $ref: '#/components/schemas/StaticUrlSchema'
         labels:
           $ref: '#/components/schemas/LabelsSchema'
+        status:
+          $ref: '#/components/schemas/StatusSchema'
       required:
         - id
         - static_url
+        - status
 
     ProbesArrayResponse:
       type: object
@@ -203,6 +206,23 @@ components:
           $ref: '#/components/schemas/LabelsSchema'
       required:
         - static_url
+
+    UpdateProbeRequest:
+      type: object
+      description: Fields to update for a probe.
+      properties:
+        status:
+          $ref: '#/components/schemas/StatusSchema'
+
+    StatusSchema:
+      type: string
+      description: The current status of the probe.
+      enum:
+        - pending
+        - active
+        - failed
+        - terminating
+      example: active
 
     ErrorObject:
       type: object
