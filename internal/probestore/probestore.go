@@ -19,6 +19,7 @@ const (
 	baseAppLabelKey          = "app"
 	baseAppLabelValue        = "rhobs-synthetics-probe"
 	probeURLHashLabelKey     = "rhobs-synthetics/static-url-hash"
+	probeStatusLabelKey      = "rhobs-synthetics/status"
 )
 
 // ProbeStorage defines the interface for storing and retrieving probes.
@@ -26,6 +27,7 @@ type ProbeStorage interface {
 	ListProbes(ctx context.Context, selector string) ([]v1.ProbeObject, error)
 	GetProbe(ctx context.Context, probeID uuid.UUID) (*v1.ProbeObject, error)
 	CreateProbe(ctx context.Context, probe v1.ProbeObject, urlHashString string) (*v1.ProbeObject, error)
+	UpdateProbe(ctx context.Context, probe v1.ProbeObject) (*v1.ProbeObject, error)
 	DeleteProbe(ctx context.Context, probeID uuid.UUID) error
 	ProbeWithURLHashExists(ctx context.Context, urlHashString string) (bool, error)
 }
@@ -108,6 +110,7 @@ func (k *KubernetesProbeStore) CreateProbe(ctx context.Context, probe v1.ProbeOb
 	// Add our base app label from the constant
 	cmLabels[baseAppLabelKey] = baseAppLabelValue
 	cmLabels[probeURLHashLabelKey] = urlHashString
+	cmLabels[probeStatusLabelKey] = string(probe.Status)
 
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -125,6 +128,50 @@ func (k *KubernetesProbeStore) CreateProbe(ctx context.Context, probe v1.ProbeOb
 		return nil, err
 	}
 	return &probe, nil
+}
+
+func (k *KubernetesProbeStore) UpdateProbe(ctx context.Context, probe v1.ProbeObject) (*v1.ProbeObject, error) {
+	configMapName := fmt.Sprintf(probeConfigMapNameFormat, probe.Id)
+
+	// We need to fetch the existing ConfigMap to get its resource version for the update.
+	cm, err := k.Client.CoreV1().ConfigMaps(k.Namespace).Get(ctx, configMapName, metav1.GetOptions{})
+	if err != nil {
+		return nil, err // Let the caller handle not found errors
+	}
+
+	// Marshal the updated probe object
+	payloadBytes, err := json.Marshal(probe)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal updated payload: %w", err)
+	}
+
+	// Update the data
+	cm.Data["probe-config.json"] = string(payloadBytes)
+
+	// Update the labels, ensuring our base labels are preserved
+	if cm.Labels == nil {
+		cm.Labels = make(map[string]string)
+	}
+	if probe.Labels != nil {
+		for key, val := range *probe.Labels {
+			cm.Labels[key] = val
+		}
+	}
+	cm.Labels[baseAppLabelKey] = baseAppLabelValue
+	cm.Labels[probeStatusLabelKey] = string(probe.Status)
+
+	updatedCM, err := k.Client.CoreV1().ConfigMaps(k.Namespace).Update(ctx, cm, metav1.UpdateOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to update configmap %s: %w", configMapName, err)
+	}
+
+	// Return the fully updated probe object
+	var finalProbe v1.ProbeObject
+	if err := json.Unmarshal([]byte(updatedCM.Data["probe-config.json"]), &finalProbe); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal probe from updated configmap: %w", err)
+	}
+
+	return &finalProbe, nil
 }
 
 func (k *KubernetesProbeStore) DeleteProbe(ctx context.Context, probeID uuid.UUID) error {

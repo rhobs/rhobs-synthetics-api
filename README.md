@@ -164,6 +164,23 @@ $ curl -s 'http://localhost:8080/metrics/probes/176937a9-a1bb-4163-b602-a1416abe
 }
 ```
 
+**Update a probe by ID**
+```
+curl -s -X PATCH -H "Content-Type: application/json" \
+  -d '{"status": "active"}' \
+  http://localhost:8080/metrics/probes/06581d72-ce30-4ff6-a761-6b0b972257cc | jq
+{
+  "id": "06581d72-ce30-4ff6-a761-6b0b972257cc",
+  "labels": {
+    "cluster-id": "d290f1ee-6c54-4b01-90e6-d701748f0852",
+    "management-cluster-id": "8e0a074c-f1e3-4957-be75-425e611142e4",
+    "private": "false"
+  },
+  "static_url": "https://api.mycluster.example.com/livez",
+  "status": "active"
+}
+```
+
 ## Delete Probes
 
 ** Delete single probe by ID**

@@ -23,6 +23,14 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for StatusSchema.
+const (
+	Active      StatusSchema = "active"
+	Failed      StatusSchema = "failed"
+	Pending     StatusSchema = "pending"
+	Terminating StatusSchema = "terminating"
+)
+
 // CreateProbeRequest defines model for CreateProbeRequest.
 type CreateProbeRequest struct {
 	// Labels A set of key-value pairs that can be used to organize and select probes.
@@ -59,6 +67,9 @@ type ProbeObject struct {
 
 	// StaticUrl The static URL to be probed.
 	StaticUrl StaticUrlSchema `json:"static_url"`
+
+	// Status The current status of the probe.
+	Status StatusSchema `json:"status"`
 }
 
 // ProbesArrayResponse defines model for ProbesArrayResponse.
@@ -69,6 +80,15 @@ type ProbesArrayResponse struct {
 
 // StaticUrlSchema The static URL to be probed.
 type StaticUrlSchema = string
+
+// StatusSchema The current status of the probe.
+type StatusSchema string
+
+// UpdateProbeRequest Fields to update for a probe.
+type UpdateProbeRequest struct {
+	// Status The current status of the probe.
+	Status *StatusSchema `json:"status,omitempty"`
+}
 
 // WarningObject defines model for WarningObject.
 type WarningObject struct {
@@ -96,6 +116,9 @@ type ListProbesParams struct {
 // CreateProbeJSONRequestBody defines body for CreateProbe for application/json ContentType.
 type CreateProbeJSONRequestBody = CreateProbeRequest
 
+// UpdateProbeJSONRequestBody defines body for UpdateProbe for application/json ContentType.
+type UpdateProbeJSONRequestBody = UpdateProbeRequest
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// Get a list of all configured probes
@@ -110,6 +133,9 @@ type ServerInterface interface {
 	// Get a probe by its ID
 	// (GET /metrics/probes/{probe_id})
 	GetProbeById(w http.ResponseWriter, r *http.Request, probeId ProbeIdPathParam)
+	// Updates a probe by its ID
+	// (PATCH /metrics/probes/{probe_id})
+	UpdateProbe(w http.ResponseWriter, r *http.Request, probeId ProbeIdPathParam)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -203,6 +229,31 @@ func (siw *ServerInterfaceWrapper) GetProbeById(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetProbeById(w, r, probeId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateProbe operation middleware
+func (siw *ServerInterfaceWrapper) UpdateProbe(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "probe_id" -------------
+	var probeId ProbeIdPathParam
+
+	err = runtime.BindStyledParameterWithOptions("simple", "probe_id", r.PathValue("probe_id"), &probeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "probe_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateProbe(w, r, probeId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -336,6 +387,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("POST "+options.BaseURL+"/metrics/probes", wrapper.CreateProbe)
 	m.HandleFunc("DELETE "+options.BaseURL+"/metrics/probes/{probe_id}", wrapper.DeleteProbe)
 	m.HandleFunc("GET "+options.BaseURL+"/metrics/probes/{probe_id}", wrapper.GetProbeById)
+	m.HandleFunc("PATCH "+options.BaseURL+"/metrics/probes/{probe_id}", wrapper.UpdateProbe)
 
 	return m
 }
@@ -452,6 +504,42 @@ func (response GetProbeById404JSONResponse) VisitGetProbeByIdResponse(w http.Res
 	return json.NewEncoder(w).Encode(response)
 }
 
+type UpdateProbeRequestObject struct {
+	ProbeId ProbeIdPathParam `json:"probe_id"`
+	Body    *UpdateProbeJSONRequestBody
+}
+
+type UpdateProbeResponseObject interface {
+	VisitUpdateProbeResponse(w http.ResponseWriter) error
+}
+
+type UpdateProbe200JSONResponse ProbeObject
+
+func (response UpdateProbe200JSONResponse) VisitUpdateProbeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type UpdateProbe400JSONResponse ErrorResponse
+
+func (response UpdateProbe400JSONResponse) VisitUpdateProbeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type UpdateProbe404JSONResponse WarningResponse
+
+func (response UpdateProbe404JSONResponse) VisitUpdateProbeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 	// Get a list of all configured probes
@@ -466,6 +554,9 @@ type StrictServerInterface interface {
 	// Get a probe by its ID
 	// (GET /metrics/probes/{probe_id})
 	GetProbeById(ctx context.Context, request GetProbeByIdRequestObject) (GetProbeByIdResponseObject, error)
+	// Updates a probe by its ID
+	// (PATCH /metrics/probes/{probe_id})
+	UpdateProbe(ctx context.Context, request UpdateProbeRequestObject) (UpdateProbeResponseObject, error)
 }
 
 type StrictHandlerFunc = strictnethttp.StrictHTTPHandlerFunc
@@ -606,31 +697,66 @@ func (sh *strictHandler) GetProbeById(w http.ResponseWriter, r *http.Request, pr
 	}
 }
 
+// UpdateProbe operation middleware
+func (sh *strictHandler) UpdateProbe(w http.ResponseWriter, r *http.Request, probeId ProbeIdPathParam) {
+	var request UpdateProbeRequestObject
+
+	request.ProbeId = probeId
+
+	var body UpdateProbeJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateProbe(ctx, request.(UpdateProbeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateProbe")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateProbeResponseObject); ok {
+		if err := validResponse.VisitUpdateProbeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"H4sIAAAAAAAC/8xYb2/bthP+KgR/P6AbIP/r0n8G+iJphs5AsWTJgr0oiuAsnSy2EqmQlBMv0HcfjqRs",
-	"SZaXdsuy5UWAWCfyueeee+7iex6rolQSpTV8fs9L0FCgRe3++gBLzC8xx9gq/UuFenNOz+lRgibWorRC",
-	"ST7nxyxWRQEjg3SAxYTlwlimUvYFN2/XkFfIcjrMMKtYKnKLmik55hHHOyjKHPmcx3llLOprkbxNnr+Z",
-	"pjPE0cv4xdHoaDmdjd5M8eUoeTWdvTp6nU5fv5hFpRZrsPjW6gp5xAUBuSGQPOISCjrS3XltQgY84ibO",
-	"sABKwG5KijBWC7nidR3xc62WuEjOwWYH0vw1Q7Y4pbRshqykeMpHo9UC19hN52tyaGCXYLMdanfwtUh4",
-	"xDXeVEJjwueUZRv//zWmfM7/N9kVcOKfmknI5NIH15RceERvvtMIFl3MBd5UaKyrvFYlaivQxfhiPXSP",
-	"04dprom4sWBFfF3p/KE3L13klc63GNu5fmyf9ClqaqWWnzG2dNGPWit95v/cw16gMbDCIZVmVQFypBES",
-	"WObIkI5hIb5bvYVcQy4Sr1rWKIilShdgeTQgnzb8BsJB7BdoSiUN7qN3mB6ir51//25/wNDNnXLN7zkk",
-	"iSBqID/vQOjlFu3RaLDp7ZHv7RKENsxmYFkMki2RVQYT6g2lVyDF78hAJoFG3zimw/d9q/u/vneCA/A5",
-	"dx5QD+TcbYXBjq6kuKmQiQSlFakgZ0oZhPb+7upqcRrK/v1favAgmTmvKtfSe+w6iDsxdwFeYKnRUPEZ",
-	"MCPkKm+MJ1YyFatKA0WOHRvtIhKP3+QS0b/e9I6eBzrfgTbHWsPmcA95gQ0YAL1GxFkQUsgVUxIZOYDS",
-	"Dav+JidOYbEwX0Xi2RZewAt00V5+AdZQWn1qBoXqqWFXFx+os5YBctJVZWZtaeaTCZRiHD4dhd4ap0qN",
-	"E1ybTKR2rPSqo06dD4nzN9DE1CN7LRMyETFYqgGNUo1GVTpGdguGSWVZqirZS8wxzW6FzWgGP7sLP6OB",
-	"X83Ps91Zf8uyAwmHBXfrAx4SS5fMPoLmkH0EFClkqgZoPl+QObECJKyIzZMc4i9Ldcd8o1Dawjr+Ln46",
-	"O7lklxtpM7QiNiGCHZ8veMTXqI0/cjqejmeUtSpRQin4nP8wno2d34LNXL6Tglae2Ex2nbZCJw9ixTnS",
-	"gnz8gzB2C6S9W34cJmoXMjm0e9afiDVfCHfx8+nUzQ8lLUqHAcoyd+pScvLZUFL337I49dzFsd8Xd7Pe",
-	"Qp5vjRiT7WSrI370iLC6K8MAoGZb0X6fYzsex05mpioK0Bs+5+/RMvhz+KQZWJm2Y9URL5UZKHBrlwzb",
-	"Khp7opLNo+U+sK3W3c6h2V/viWL2uKI4a7Vil3vvS7GDmTBTxTEak1Z5vgk6ePN0OjgOU8y5JBmrgaKZ",
-	"GzRSGeRkyBuGd8JYL9QXTytUi1oCbdR6jdpPhb5Gfclp4ZF46zMa0mQd9X1oct/861R7q8zR4r5oT93n",
-	"jWi/zZb2/kkc8KOjfZ/2IvGAeiJhPysWyA+COXq0evQH10H5tmZutxaeK7PdhwuwcUaDptRqLRJM2OJ0",
-	"2DAGB8J79PPgZLNI/hHup0/V9u96trljJnw30LDzHyyqHwIe9nLDhDUHqkivhQ/7ij5r6mqYxtx5n1Us",
-	"9ONukrS/0jC8/lT/EQAA//9ND8DichIAAA==",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file
