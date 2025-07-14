@@ -8,6 +8,8 @@
 *.so
 *.dylib
 
+rhobs-synthetics-api
+
 # Test binary, built with `go test -c`
 *.test
 

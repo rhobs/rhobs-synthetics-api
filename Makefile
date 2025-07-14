@@ -1,7 +1,21 @@
+# Makefile for building the rhobs-synthetics-api binary
 OAPI_CODEGEN_VERSION=v2.4.1
 
-# Default target
-all: generate
+# The name of the binary to be built
+BINARY_NAME=rhobs-synthetics-api
+
+# The main package of the application
+MAIN_PACKAGE=./cmd/api/main.go
+
+.PHONY: all build clean run help lint lint-ci tidy generate ensure-oapi-codegen
+
+all: build
+
+# Build the Go binary
+build:
+	@echo "Building $(BINARY_NAME)..."
+	@go build -o $(BINARY_NAME) $(MAIN_PACKAGE)
+	@echo "$(BINARY_NAME) built successfully."
 
 # Ensures oapi-codegen is installed locally.
 # It checks if the binary exists in GOPATH/bin, and if not, it installs it.
@@ -26,4 +40,11 @@ test:
 
 tidy:
 	go mod tidy
+
+# Clean up build artifacts
+clean:
+	@echo "Cleaning up..."
+	@go clean
+	@rm -f $(BINARY_NAME)
+	@echo "Cleanup complete."
 
