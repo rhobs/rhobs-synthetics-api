@@ -1,13 +1,21 @@
 # Makefile for building the rhobs-synthetics-api binary
 OAPI_CODEGEN_VERSION=v2.4.1
-
+# Replace 'your-quay-namespace' with your actual Quay.io namespace.
+IMAGE_URL ?= quay.io/app-sre/rhobs/rhobs-synthetics-api
+# Image tag, defaults to 'latest'
+TAG ?= latest
+# Namespace where the resources will be deployed
+NAMESPACE ?= rhobs
+# Konflux manifests directory
+KONFLUX_DIR := konflux
 # The name of the binary to be built
 BINARY_NAME=rhobs-synthetics-api
-
 # The main package of the application
 MAIN_PACKAGE=./cmd/api/main.go
+# podman vs. docker
+CONTAINER_ENGINE ?= podman
 
-.PHONY: all build clean run help lint lint-ci tidy generate ensure-oapi-codegen
+.PHONY: all build clean run help lint lint-ci tidy generate ensure-oapi-codegen docker-build docker-push
 
 all: build
 
@@ -40,6 +48,16 @@ test:
 
 tidy:
 	go mod tidy
+
+# Build the Docker image
+docker-build:
+	@echo "Building Docker image: $(IMAGE_URL):$(TAG)"
+	$(CONTAINER_ENGINE) build -t $(IMAGE_URL):$(TAG) .
+
+# Push the Docker image to the registry
+docker-push:
+	@echo "Pushing Docker image: $(IMAGE_URL):$(TAG)"
+	$(CONTAINER_ENGINE) push $(IMAGE_URL):$(TAG)
 
 # Clean up build artifacts
 clean:
