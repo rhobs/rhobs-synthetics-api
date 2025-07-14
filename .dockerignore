@@ -1,0 +1,18 @@
+# Ignore git directory
+.git
+.gitignore
+
+# Ignore IDE and editor files
+.idea
+.vscode
+
+# Ignore local build artifacts
+rhobs-synthetics-api
+*.exe
+*.out
+
+# Ignore documentation and local configuration
+README.md
+
+# Ignore Go modules, they are handled inside the Dockerfile
+vendor/

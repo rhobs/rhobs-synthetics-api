@@ -4,12 +4,20 @@ This application provides a synthetic monitoring API to be used within the RHOBS
 
 ---
 
-## Building
+## Building Binary
 
 Build the `rhobs-synthetics-api` binary:
 
 ```sh
 make build
+```
+
+## Building Local Image
+
+Build the `rhobs-synthetics-api` binary and local container image:
+
+```sh
+make docker-build
 ```
 
 ## Running
