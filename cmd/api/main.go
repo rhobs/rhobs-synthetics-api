@@ -12,6 +12,7 @@ import (
 	"github.com/rhobs/rhobs-synthetics-api/internal/api"
 	"github.com/rhobs/rhobs-synthetics-api/internal/probestore"
 	v1 "github.com/rhobs/rhobs-synthetics-api/pkg/apis/v1"
+	"github.com/rhobs/rhobs-synthetics-api/web"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -54,24 +55,46 @@ func runWebServer(addr string) error {
 		return fmt.Errorf("failed to create probe store: %w", err)
 	}
 	server := api.NewServer(store)
+	serverHandler := v1.NewStrictHandler(server, nil)
 
-	serverHandler := v1.NewStrictHandler(&server, nil)
+	// The main router
+	mux := http.NewServeMux()
 
-	r := http.NewServeMux()
+	// Add the Swagger UI handler at /docs
+	mux.HandleFunc("/docs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(web.SwaggerHTML)
+	})
 
-	v1.HandlerFromMux(serverHandler, r)
+	// Add the OpenAPI spec handler at /api/v1/openapi.json
+	mux.HandleFunc("/api/v1/openapi.json", func(w http.ResponseWriter, r *http.Request) {
+		jsonSpec, err := swagger.MarshalJSON()
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to marshal swagger spec: %v", err), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(jsonSpec)
+	})
 
-	// Use validation middleware to check all requests against the OpenAPI schema.
-	h := middleware.OapiRequestValidator(swagger)(r)
+	// The API handlers are registered on a separate router and validated.
+	apiRouter := http.NewServeMux()
+	v1.HandlerFromMux(serverHandler, apiRouter)
+	validatedAPI := middleware.OapiRequestValidator(swagger)(apiRouter)
+
+	// Mount the validated API router to the main router.
+	// Requests will be matched against the UI handlers first, then fall through to the API.
+	mux.Handle("/", validatedAPI)
 
 	s := &http.Server{
-		Handler:      h,
+		Handler:      mux,
 		Addr:         addr,
 		ReadTimeout:  viper.GetDuration("read_timeout"),
 		WriteTimeout: viper.GetDuration("write_timeout"),
 	}
 
-	log.Printf("Listening on http://%s", addr)
+	log.Printf("API server listening on http://%s", addr)
+	log.Printf("Swagger UI available at http://%s/docs", addr)
 	return s.ListenAndServe()
 }
 
