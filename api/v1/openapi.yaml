@@ -80,6 +80,38 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/WarningResponse"
+    patch:
+      summary: Updates a probe by its ID
+      operationId: updateProbe
+      tags:
+        - probes
+      parameters:
+        - $ref: '#/components/parameters/ProbeIdPathParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProbeRequest'
+      responses:
+        "200":
+          description: Probe updated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProbeObject"
+        "404":
+          description: Probe not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarningResponse"
+        "400":
+          description: Invalid request parameters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     delete:
       summary: Deletes a probe matching provided ID
       operationId: deleteProbe
