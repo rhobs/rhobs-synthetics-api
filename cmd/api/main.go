@@ -60,6 +60,24 @@ func runWebServer(addr string) error {
 	// The main router
 	mux := http.NewServeMux()
 
+	// Liveness and Readiness probes
+	mux.HandleFunc("/livez", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		_, err := clientset.Discovery().ServerVersion()
+		if err != nil {
+			log.Printf("Readiness check failed: could not connect to Kubernetes API server: %v", err)
+			http.Error(w, "not ready: failed to connect to Kubernetes", http.StatusServiceUnavailable)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
 	// Add the Swagger UI handler at /docs
 	mux.HandleFunc("/docs", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
