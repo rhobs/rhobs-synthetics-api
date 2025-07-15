@@ -6,8 +6,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
+	"github.com/getkin/kin-openapi/openapi3"
 	middleware "github.com/oapi-codegen/nethttp-middleware"
 	"github.com/rhobs/rhobs-synthetics-api/internal/api"
 	"github.com/rhobs/rhobs-synthetics-api/internal/probestore"
@@ -21,16 +24,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-// runWebServer starts the HTTP server.
-func runWebServer(addr string) error {
-
-	swagger, err := v1.GetSwagger()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading swagger spec\n: %s", err)
-	}
-
-	swagger.Servers = nil
-
+func createKubernetesClientset() (*kubernetes.Clientset, error) {
 	// Try to create in-cluster config
 	config, err := rest.InClusterConfig()
 	if err != nil {
@@ -39,24 +33,18 @@ func runWebServer(addr string) error {
 		kubeconfigPath := viper.GetString("kubeconfig")
 		config, err = clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 		if err != nil {
-			return fmt.Errorf("failed to create kubernetes client config from kubeconfig: %w", err)
+			return nil, fmt.Errorf("failed to create kubernetes client config from kubeconfig: %w", err)
 		}
 	}
 
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		return fmt.Errorf("failed to create kubernetes client: %w", err)
+		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
 	}
+	return clientset, nil
+}
 
-	namespace := viper.GetString("namespace")
-
-	store, err := probestore.NewKubernetesProbeStore(context.Background(), clientset, namespace)
-	if err != nil {
-		return fmt.Errorf("failed to create probe store: %w", err)
-	}
-	server := api.NewServer(store)
-	serverHandler := v1.NewStrictHandler(server, nil)
-
+func createRouter(validatedAPI http.Handler, clientset *kubernetes.Clientset, swagger *openapi3.T) http.Handler {
 	// The main router
 	mux := http.NewServeMux()
 
@@ -95,25 +83,81 @@ func runWebServer(addr string) error {
 		_, _ = w.Write(jsonSpec)
 	})
 
+	// Mount the validated API router to the main router.
+	// Requests will be matched against the UI handlers first, then fall through to the API.
+	mux.Handle("/", validatedAPI)
+	return mux
+}
+
+// runWebServer starts the HTTP server.
+func runWebServer(addr string) error {
+
+	swagger, err := v1.GetSwagger()
+	if err != nil {
+		return fmt.Errorf("error loading swagger spec: %w", err)
+	}
+
+	swagger.Servers = nil
+
+	clientset, err := createKubernetesClientset()
+	if err != nil {
+		return fmt.Errorf("failed to create kubernetes clientset: %w", err)
+	}
+
+	namespace := viper.GetString("namespace")
+
+	store, err := probestore.NewKubernetesProbeStore(context.Background(), clientset, namespace)
+	if err != nil {
+		return fmt.Errorf("failed to create probe store: %w", err)
+	}
+	server := api.NewServer(store)
+	serverHandler := v1.NewStrictHandler(server, nil)
+
 	// The API handlers are registered on a separate router and validated.
 	apiRouter := http.NewServeMux()
 	v1.HandlerFromMux(serverHandler, apiRouter)
 	validatedAPI := middleware.OapiRequestValidator(swagger)(apiRouter)
 
-	// Mount the validated API router to the main router.
-	// Requests will be matched against the UI handlers first, then fall through to the API.
-	mux.Handle("/", validatedAPI)
+	router := createRouter(validatedAPI, clientset, swagger)
 
 	s := &http.Server{
-		Handler:      mux,
+		Handler:      router,
 		Addr:         addr,
 		ReadTimeout:  viper.GetDuration("read_timeout"),
 		WriteTimeout: viper.GetDuration("write_timeout"),
 	}
 
-	log.Printf("API server listening on http://%s", addr)
-	log.Printf("Swagger UI available at http://%s/docs", addr)
-	return s.ListenAndServe()
+	// Start the server in a goroutine so it doesn't block the main thread
+	go func() {
+		log.Printf("API server listening on http://%s", addr)
+		log.Printf("Swagger UI available at http://%s/docs", addr)
+		if err := s.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server failed to start: %v", err)
+		}
+		log.Println("Server stopped serving new connections.")
+	}()
+
+	// Set up a channel to listen for OS signals for graceful shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM) // Listen for Ctrl+C and termination signals
+
+	// Block until a signal is received
+	sig := <-quit
+	log.Printf("Received signal: %v. Initiating graceful shutdown...", sig)
+
+	// Create a deadline context for the shutdown process
+	shutdownTimeout := viper.GetDuration("graceful_timeout")
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+
+	// Attempt graceful shutdown
+	if err := s.Shutdown(ctx); err != nil {
+		log.Fatalf("Server forced to shutdown: %v", err)
+	}
+
+	log.Println("Server gracefully shut down.")
+
+	return nil
 }
 
 func main() {
