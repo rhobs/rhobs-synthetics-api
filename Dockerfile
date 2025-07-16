@@ -26,11 +26,14 @@ WORKDIR /
 # Copy the binary from the builder stage
 COPY --from=builder /app/rhobs-synthetics-api .
 
+# Copy the entrypoint script
+COPY entrypoint.sh .
+
 # Set permissions for the non-root user.
 # We create a user with UID 1001. OpenShift runs containers with arbitrary UIDs by default,
 # so this is a good practice. We assign the user to the root group (GID 0)
 # and give ownership of the app directory and binary to the new user.
-RUN chown -R 1001:0 ./rhobs-synthetics-api
+RUN chmod +x ./entrypoint.sh && chown 1001:0 ./entrypoint.sh && chown 1001:0 ./rhobs-synthetics-api
 
 # Expose port 8080 to the outside world.
 # Ports below 1024 require root privileges.
@@ -39,5 +42,5 @@ EXPOSE 8080
 # Switch to the non-root user
 USER 1001
 
-# Command to run the executable
-CMD ["./rhobs-synthetics-api","start"]
+# Use the entrypoint script to start the application
+ENTRYPOINT ["./entrypoint.sh"]

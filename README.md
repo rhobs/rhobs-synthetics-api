@@ -76,6 +76,26 @@ Use the `--config` flag to specify the file to use
 ./rhobs-synthetics-api start --config /path/to/config.yaml
 ```
 
+## Running with Docker
+
+You can build and run this application in a Docker container.
+
+### Building the Image
+
+```sh
+make docker-build
+```
+
+### Running the Container
+
+**Development Mode (using in-memory local store):**
+
+By setting the `APP_ENV=dev` environment variable, the container will automatically start the server using the `local` database engine, which is useful for local testing without needing Kubernetes.
+
+```sh
+docker run -p 8080:8080 -e APP_ENV=dev rhobs-synthetics-api
+```
+
 ## Example Commands
 
 ### Create a Probe
