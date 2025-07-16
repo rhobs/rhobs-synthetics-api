@@ -51,8 +51,8 @@ tidy:
 
 # Build the Docker image
 docker-build:
-	@echo "Building Docker image: $(IMAGE_URL):$(TAG)"
-	$(CONTAINER_ENGINE) build -t $(IMAGE_URL):$(TAG) .
+	@echo "Building Docker image for linux/amd64: $(IMAGE_URL):$(TAG)"
+	$(CONTAINER_ENGINE) build --platform linux/amd64 -t $(IMAGE_URL):$(TAG) .
 
 # Push the Docker image to the registry
 docker-push:

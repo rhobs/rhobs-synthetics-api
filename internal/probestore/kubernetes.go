@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 	v1 "github.com/rhobs/rhobs-synthetics-api/pkg/apis/v1"
 	corev1 "k8s.io/api/core/v1"
-	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -28,18 +27,12 @@ type KubernetesProbeStore struct {
 	Namespace string
 }
 
-// NewKubernetesProbeStore creates a new KubernetesProbeStore and verifies the namespace exists.
+// NewKubernetesProbeStore creates a new KubernetesProbeStore.
+// The namespace existence is not checked here; it is assumed to exist.
+// RBAC permissions for the service account only allow for namespaced resource access,
+// so a cluster-level check for a namespace is not possible and also redundant.
 func NewKubernetesProbeStore(ctx context.Context, client kubernetes.Interface, namespace string) (*KubernetesProbeStore, error) {
-	log.Printf("Verifying that namespace %q exists...", namespace)
-	_, err := client.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
-	if err != nil {
-		if k8serrors.IsNotFound(err) {
-			return nil, fmt.Errorf("namespace %q does not exist", namespace)
-		}
-		return nil, fmt.Errorf("failed to verify if namespace %q exists: %w", namespace, err)
-	}
-	log.Printf("Namespace %q verified.", namespace)
-
+	log.Printf("Initializing Kubernetes probe store in namespace %q", namespace)
 	return &KubernetesProbeStore{
 		Client:    client,
 		Namespace: namespace,
