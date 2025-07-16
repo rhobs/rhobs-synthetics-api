@@ -55,6 +55,12 @@ func createRouter(validatedAPI http.Handler, clientset *kubernetes.Clientset, sw
 	})
 
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		// If not using the etcd backend, we don't need to check k8s connectivity.
+		if clientset == nil {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+			return
+		}
 		_, err := clientset.Discovery().ServerVersion()
 		if err != nil {
 			log.Printf("Readiness check failed: could not connect to Kubernetes API server: %v", err)
@@ -89,6 +95,36 @@ func createRouter(validatedAPI http.Handler, clientset *kubernetes.Clientset, sw
 	return mux
 }
 
+func createProbeStore() (probestore.ProbeStorage, *kubernetes.Clientset, error) {
+	var store probestore.ProbeStorage
+	var clientset *kubernetes.Clientset
+	var err error
+
+	databaseEngine := viper.GetString("database_engine")
+	log.Printf("Using database engine: %s", databaseEngine)
+
+	switch databaseEngine {
+	case "etcd":
+		clientset, err = createKubernetesClientset()
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to create kubernetes clientset: %w", err)
+		}
+		namespace := viper.GetString("namespace")
+		store, err = probestore.NewKubernetesProbeStore(context.Background(), clientset, namespace)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to create kubernetes probe store: %w", err)
+		}
+	case "local":
+		store, err = probestore.NewLocalProbeStore()
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to create local probe store: %w", err)
+		}
+	default:
+		return nil, nil, fmt.Errorf("unsupported database engine: %s. Supported engines are 'etcd', 'local'", databaseEngine)
+	}
+	return store, clientset, nil
+}
+
 // runWebServer starts the HTTP server.
 func runWebServer(addr string) error {
 
@@ -99,17 +135,11 @@ func runWebServer(addr string) error {
 
 	swagger.Servers = nil
 
-	clientset, err := createKubernetesClientset()
-	if err != nil {
-		return fmt.Errorf("failed to create kubernetes clientset: %w", err)
-	}
-
-	namespace := viper.GetString("namespace")
-
-	store, err := probestore.NewKubernetesProbeStore(context.Background(), clientset, namespace)
+	store, clientset, err := createProbeStore()
 	if err != nil {
 		return fmt.Errorf("failed to create probe store: %w", err)
 	}
+
 	server := api.NewServer(store)
 	serverHandler := v1.NewStrictHandler(server, nil)
 
@@ -207,7 +237,7 @@ func main() {
 	startCmd.Flags().Duration("read-timeout", 5*time.Second, "Max duration for reading the entire request (e.g. 5s)")
 	startCmd.Flags().Duration("write-timeout", 10*time.Second, "Max duration before timing out writes")
 	startCmd.Flags().Duration("graceful-timeout", 15*time.Second, "Time allowed for graceful shutdown")
-	startCmd.Flags().String("database-engine", "etcd", "Specifies the backend database engine for persisting probe configurations (default: etcd)")
+	startCmd.Flags().String("database-engine", "etcd", "Specifies the backend database engine. Supported: 'etcd', 'local'.")
 	startCmd.Flags().String("kubeconfig", "", "Path to kubeconfig file (optional, for out-of-cluster development)")
 	startCmd.Flags().String("namespace", "default", "The Kubernetes namespace to store probe configmaps in.")
 

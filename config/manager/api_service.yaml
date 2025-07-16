@@ -1,0 +1,14 @@
+kind: Service
+apiVersion: v1
+metadata:
+  name: rhobs-synthetics-api
+  labels:
+    app: rhobs-synthetics-api
+spec:
+  selector:
+    app: rhobs-synthetics-api
+  ports:
+  - name: http
+    port: 8080
+    protocol: TCP
+    targetPort: http
