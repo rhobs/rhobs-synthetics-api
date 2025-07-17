@@ -99,6 +99,7 @@ func (m *mockProbeStore) ProbeWithURLHashExists(ctx context.Context, urlHashStri
 	_, exists := m.urlHashes[urlHashString]
 	return exists, nil
 }
+
 func TestListProbes(t *testing.T) {
 	probe1ID := uuid.New()
 	probe2ID := uuid.New()
