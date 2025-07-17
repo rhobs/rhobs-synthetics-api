@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -218,6 +220,8 @@ func TestGetProbeById(t *testing.T) {
 
 func TestCreateProbe(t *testing.T) {
 	newURL := "https://example.com/new"
+	urlHashBytes := sha256.Sum256([]byte(newURL))
+	urlHashString := hex.EncodeToString(urlHashBytes[:])[:63]
 
 	testCases := []struct {
 		name             string
@@ -235,7 +239,7 @@ func TestCreateProbe(t *testing.T) {
 		{
 			name:             "returns 409 when url hash exists",
 			reqBody:          v1.CreateProbeJSONRequestBody{StaticUrl: newURL},
-			store:            &mockProbeStore{urlHashes: map[string]bool{"20a1c3567265ddc831379c16853754e3579b199e468202c488734289874a625e": true}},
+			store:            &mockProbeStore{urlHashes: map[string]bool{urlHashString: true}},
 			expectedResponse: v1.CreateProbe409JSONResponse{},
 		},
 		{
