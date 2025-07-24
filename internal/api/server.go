@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"log"
 
 	"github.com/google/uuid"
 	"github.com/rhobs/rhobs-synthetics-api/internal/probestore"
@@ -31,7 +30,7 @@ func NewServer(store probestore.ProbeStorage) Server {
 	}
 }
 
-// (GET /metrics/probes)
+// (GET /probes)
 func (s Server) ListProbes(ctx context.Context, request v1.ListProbesRequestObject) (v1.ListProbesResponseObject, error) {
 	baseSelector := fmt.Sprintf("%s=%s", baseAppLabelKey, baseAppLabelValue)
 	finalSelector := baseSelector
@@ -59,7 +58,7 @@ func (s Server) ListProbes(ctx context.Context, request v1.ListProbesRequestObje
 	return v1.ListProbes200JSONResponse(v1.ProbesArrayResponse{Probes: probes}), nil
 }
 
-// (GET /metrics/probes/{probe_id})
+// (GET /probes/{probe_id})
 func (s Server) GetProbeById(ctx context.Context, request v1.GetProbeByIdRequestObject) (v1.GetProbeByIdResponseObject, error) {
 	probe, err := s.Store.GetProbe(ctx, request.ProbeId)
 	if err != nil {
@@ -76,7 +75,7 @@ func (s Server) GetProbeById(ctx context.Context, request v1.GetProbeByIdRequest
 	return v1.GetProbeById200JSONResponse(*probe), nil
 }
 
-// (POST /metrics/probes)
+// (POST /probes)
 func (s Server) CreateProbe(ctx context.Context, request v1.CreateProbeRequestObject) (v1.CreateProbeResponseObject, error) {
 	urlHash := sha256.Sum256([]byte(request.Body.StaticUrl))
 	urlHashString := hex.EncodeToString(urlHash[:])[:63]
@@ -110,11 +109,10 @@ func (s Server) CreateProbe(ctx context.Context, request v1.CreateProbeRequestOb
 		}, nil
 	}
 
-	log.Printf("Successfully created probe and config map for probe ID: %s", createdProbe.Id)
 	return v1.CreateProbe201JSONResponse(*createdProbe), nil
 }
 
-// (PATCH /metrics/probes/{probe_id})
+// (PATCH /probes/{probe_id})
 func (s Server) UpdateProbe(ctx context.Context, request v1.UpdateProbeRequestObject) (v1.UpdateProbeResponseObject, error) {
 	// First, get the existing probe.
 	existingProbe, err := s.Store.GetProbe(ctx, request.ProbeId)
@@ -143,7 +141,7 @@ func (s Server) UpdateProbe(ctx context.Context, request v1.UpdateProbeRequestOb
 	return v1.UpdateProbe200JSONResponse(*updatedProbe), nil
 }
 
-// (DELETE /metrics/probes/{probe_id})
+// (DELETE /probes/{probe_id})
 func (s Server) DeleteProbe(ctx context.Context, request v1.DeleteProbeRequestObject) (v1.DeleteProbeResponseObject, error) {
 	err := s.Store.DeleteProbe(ctx, request.ProbeId)
 	if err != nil {
@@ -157,6 +155,5 @@ func (s Server) DeleteProbe(ctx context.Context, request v1.DeleteProbeRequestOb
 		return nil, fmt.Errorf("failed to delete probe from storage: %w", err)
 	}
 
-	log.Printf("Successfully deleted probe for probe ID: %s", request.ProbeId)
 	return v1.DeleteProbe204Response{}, nil
 }

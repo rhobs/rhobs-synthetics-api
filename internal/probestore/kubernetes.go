@@ -15,10 +15,6 @@ import (
 
 const (
 	probeConfigMapNameFormat = "probe-config-%s"
-	baseAppLabelKey          = "app"
-	baseAppLabelValue        = "rhobs-synthetics-probe"
-	probeURLHashLabelKey     = "rhobs-synthetics/static-url-hash"
-	probeStatusLabelKey      = "rhobs-synthetics/status"
 )
 
 // KubernetesProbeStore implements the ProbeStorage interface using Kubernetes ConfigMaps.
@@ -110,6 +106,9 @@ func (k *KubernetesProbeStore) CreateProbe(ctx context.Context, probe v1.ProbeOb
 	if err != nil {
 		return nil, err
 	}
+
+	// TODO: Tune logging level for this
+	log.Printf("Created probe %s with URL hash %s", probe.Id.String(), urlHashString)
 	return &probe, nil
 }
 
@@ -154,11 +153,16 @@ func (k *KubernetesProbeStore) UpdateProbe(ctx context.Context, probe v1.ProbeOb
 		return nil, fmt.Errorf("failed to unmarshal probe from updated configmap: %w", err)
 	}
 
+	// TODO: Tune logging level for this
+	log.Printf("Updated probe %s", probe.Id.String())
 	return &finalProbe, nil
 }
 
 func (k *KubernetesProbeStore) DeleteProbe(ctx context.Context, probeID uuid.UUID) error {
 	configMapName := fmt.Sprintf(probeConfigMapNameFormat, probeID)
+
+	// TODO: Tune logging level for this
+	log.Printf("Deleted probe %s", probeID.String())
 	return k.Client.CoreV1().ConfigMaps(k.Namespace).Delete(ctx, configMapName, metav1.DeleteOptions{})
 }
 
