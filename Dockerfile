@@ -1,18 +1,18 @@
 # Use the official Golang image to create a build artifact.
 # This is a multi-stage build, so we'll use a temporary image for the build process.
-FROM golang:1.24 AS builder
+FROM registry.access.redhat.com/ubi9/go-toolset:1.24.4 AS builder
 
 # Set the Current Working Directory inside the container
 WORKDIR /app
 
 # Copy go mod and sum files
-COPY go.mod go.sum ./
+COPY --chown=default go.mod go.sum ./
 
 # Download all dependencies. Dependencies will be cached if the go.mod and go.sum files are not changed
 RUN go mod download
 
 # Copy the source code into the container
-COPY . .
+COPY --chown=default . .
 
 # Build the Go app
 RUN make build
