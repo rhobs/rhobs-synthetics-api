@@ -7,7 +7,7 @@ tags:
   - name: probes
     description: Operations related to metrics probes
 paths:
-  /metrics/probes:
+  /probes:
     get:
       summary: Get a list of all configured probes
       operationId: listProbes
@@ -59,7 +59,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /metrics/probes/{probe_id}:
+  /probes/{probe_id}:
     get:
       summary: Get a probe by its ID
       operationId: getProbeById

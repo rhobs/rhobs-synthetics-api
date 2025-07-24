@@ -115,7 +115,13 @@ func createProbeStore() (probestore.ProbeStorage, *kubernetes.Clientset, error) 
 			return nil, nil, fmt.Errorf("failed to create kubernetes probe store: %w", err)
 		}
 	case "local":
-		store, err = probestore.NewLocalProbeStore()
+		log.Printf("Using local probe store: WARNING: This is not recommended for production use.")
+		dataDir := viper.GetString("data_dir")
+		if dataDir != "" {
+			store, err = probestore.NewLocalProbeStoreWithDir(dataDir)
+		} else {
+			store, err = probestore.NewLocalProbeStore()
+		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to create local probe store: %w", err)
 		}
@@ -216,6 +222,17 @@ func main() {
 		Use:   "start",
 		Short: "Start the API web server",
 		Long:  `Starts the HTTP server to expose the synthetics API.`,
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			// Validate that --data-dir is only used with --database-engine=local
+			databaseEngine := viper.GetString("database_engine")
+			dataDir := viper.GetString("data_dir")
+
+			if dataDir != "" && databaseEngine != "local" {
+				return fmt.Errorf("--data-dir can only be used when --database-engine=local (current engine: %s)", databaseEngine)
+			}
+
+			return nil
+		},
 		Run: func(cmd *cobra.Command, args []string) {
 			host := viper.GetString("host")
 			port := viper.GetInt("port")
@@ -238,6 +255,7 @@ func main() {
 	startCmd.Flags().Duration("write-timeout", 10*time.Second, "Max duration before timing out writes")
 	startCmd.Flags().Duration("graceful-timeout", 15*time.Second, "Time allowed for graceful shutdown")
 	startCmd.Flags().String("database-engine", "etcd", "Specifies the backend database engine. Supported: 'etcd', 'local'.")
+	startCmd.Flags().String("data-dir", "", "Directory for local storage (only valid with --database-engine=local, defaults to 'data')")
 	startCmd.Flags().String("kubeconfig", "", "Path to kubeconfig file (optional, for out-of-cluster development)")
 	startCmd.Flags().String("namespace", "default", "The Kubernetes namespace to store probe configmaps in.")
 
@@ -248,6 +266,7 @@ func main() {
 	viper.BindPFlag("write_timeout", startCmd.Flags().Lookup("write-timeout"))
 	viper.BindPFlag("graceful_timeout", startCmd.Flags().Lookup("graceful-timeout"))
 	viper.BindPFlag("database_engine", startCmd.Flags().Lookup("database-engine"))
+	viper.BindPFlag("data_dir", startCmd.Flags().Lookup("data-dir"))
 	viper.BindPFlag("config", startCmd.Flags().Lookup("config"))
 	viper.BindPFlag("log_level", startCmd.Flags().Lookup("log-level"))
 	viper.BindPFlag("kubeconfig", startCmd.Flags().Lookup("kubeconfig"))
