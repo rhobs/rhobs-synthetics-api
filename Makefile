@@ -15,7 +15,7 @@ MAIN_PACKAGE=./cmd/api/main.go
 # podman vs. docker
 CONTAINER_ENGINE ?= podman
 
-.PHONY: all build clean run help lint lint-ci tidy generate ensure-oapi-codegen docker-build docker-push
+.PHONY: all build clean run help lint lint-fix lint-ci tidy generate ensure-oapi-codegen docker-build docker-push
 
 all: build
 
@@ -37,11 +37,26 @@ generate: ensure-oapi-codegen
 	@mkdir -p pkg/client # Ensure pkg/client directory exists
 	$(GOENV) go generate -v ./...
 
-lint:
-	$(GOBIN)/golangci-lint run ./...
+GOLANGCI_LINT_VERSION ?= v2.0.2
+GOLANGCI_LINT_BIN := $(shell go env GOPATH)/bin/golangci-lint
+
+lint: $(GOLANGCI_LINT_BIN)
+	$(GOLANGCI_LINT_BIN) run ./...
 
 lint-ci:
-	$(GOBIN)/golangci-lint run ./... --output.text.path=stdout --timeout=5m
+	$(GOLANGCI_LINT_BIN) run ./... --output.text.path=stdout --timeout=5m
+
+lint-fix: $(GOLANGCI_LINT_BIN)
+	$(GOLANGCI_LINT_BIN) run --fix ./...
+
+$(GOLANGCI_LINT_BIN):
+	@echo "Checking for golangci-lint..."
+	@if [ ! -f "$@" ]; then \
+		echo "golangci-lint not found. Installing $(GOLANGCI_LINT_VERSION)..."; \
+		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(dir $@) $(GOLANGCI_LINT_VERSION); \
+	else \
+		echo "golangci-lint already installed."; \
+	fi
 
 test:
 	go test -cover ./...
@@ -64,5 +79,5 @@ clean:
 	@echo "Cleaning up..."
 	@go clean
 	@rm -f $(BINARY_NAME)
+	@$(CONTAINER_ENGINE) rmi -f -i $(IMAGE_URL):$(TAG)
 	@echo "Cleanup complete."
-
