@@ -2,8 +2,11 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -17,9 +20,14 @@ import (
 
 // mockProbeStore is a mock implementation of the ProbeStorage interface for testing.
 type mockProbeStore struct {
-	probes         map[uuid.UUID]v1.ProbeObject
-	getProbeErr    error
-	updateProbeErr error
+	probes                    map[uuid.UUID]v1.ProbeObject
+	getProbeErr               error
+	updateProbeErr            error
+	listProbesErr             error
+	createProbeErr            error
+	deleteProbeErr            error
+	probeWithURLHashExistsErr error
+	urlHashes                 map[string]bool
 }
 
 // Enforce that mockProbeStore implements the ProbeStorage interface.
@@ -48,16 +56,278 @@ func (m *mockProbeStore) UpdateProbe(ctx context.Context, probe v1.ProbeObject) 
 }
 
 func (m *mockProbeStore) ListProbes(ctx context.Context, selector string) ([]v1.ProbeObject, error) {
-	return nil, errors.New("not implemented")
+	if m.listProbesErr != nil {
+		return nil, m.listProbesErr
+	}
+	var res []v1.ProbeObject
+	for _, p := range m.probes {
+		res = append(res, p)
+	}
+	return res, nil
 }
+
 func (m *mockProbeStore) CreateProbe(ctx context.Context, probe v1.ProbeObject, urlHashString string) (*v1.ProbeObject, error) {
-	return nil, errors.New("not implemented")
+	if m.createProbeErr != nil {
+		return nil, m.createProbeErr
+	}
+	if m.probes == nil {
+		m.probes = make(map[uuid.UUID]v1.ProbeObject)
+	}
+	if m.urlHashes == nil {
+		m.urlHashes = make(map[string]bool)
+	}
+	m.probes[probe.Id] = probe
+	m.urlHashes[urlHashString] = true
+	return &probe, nil
 }
+
 func (m *mockProbeStore) DeleteProbe(ctx context.Context, probeID uuid.UUID) error {
-	return errors.New("not implemented")
+	if m.deleteProbeErr != nil {
+		return m.deleteProbeErr
+	}
+	if _, ok := m.probes[probeID]; !ok {
+		return k8serrors.NewNotFound(schema.GroupResource{}, probeID.String())
+	}
+	delete(m.probes, probeID)
+	return nil
 }
+
 func (m *mockProbeStore) ProbeWithURLHashExists(ctx context.Context, urlHashString string) (bool, error) {
-	return false, errors.New("not implemented")
+	if m.probeWithURLHashExistsErr != nil {
+		return false, m.probeWithURLHashExistsErr
+	}
+	_, exists := m.urlHashes[urlHashString]
+	return exists, nil
+}
+
+func TestListProbes(t *testing.T) {
+	probe1ID := uuid.New()
+	probe2ID := uuid.New()
+	probes := []v1.ProbeObject{
+		{Id: probe1ID, StaticUrl: "https://example.com/1"},
+		{Id: probe2ID, StaticUrl: "https://example.com/2"},
+	}
+
+	testCases := []struct {
+		name             string
+		params           v1.ListProbesParams
+		store            probestore.ProbeStorage
+		expectedResponse v1.ListProbesResponseObject
+		expectedErr      string
+	}{
+		{
+			name:   "successfully lists probes",
+			params: v1.ListProbesParams{},
+			store: &mockProbeStore{
+				probes: map[uuid.UUID]v1.ProbeObject{
+					probe1ID: probes[0],
+					probe2ID: probes[1],
+				},
+			},
+			expectedResponse: v1.ListProbes200JSONResponse(v1.ProbesArrayResponse{Probes: probes}),
+		},
+		{
+			name:   "returns 400 for invalid label selector",
+			params: v1.ListProbesParams{LabelSelector: func() *string { s := "invalid selector"; return &s }()},
+			store:  &mockProbeStore{},
+			expectedResponse: v1.ListProbes400JSONResponse{
+				Error: v1.ErrorObject{Message: "invalid label_selector: unable to parse requirement: found 'invalid', expected: identifier, '!', 'in', 'notin', '=', '==', '!='"},
+			},
+		},
+		{
+			name:   "returns error when listing fails",
+			params: v1.ListProbesParams{},
+			store: &mockProbeStore{
+				listProbesErr: errors.New("generic list error"),
+			},
+			expectedErr: "failed to list probes from storage: generic list error",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := NewServer(tc.store)
+			req := v1.ListProbesRequestObject{Params: tc.params}
+
+			res, err := server.ListProbes(context.Background(), req)
+
+			if tc.expectedErr != "" {
+				require.Error(t, err)
+				assert.EqualError(t, err, tc.expectedErr)
+			} else {
+				require.NoError(t, err)
+				if resp400, ok := res.(v1.ListProbes400JSONResponse); ok {
+					assert.True(t, strings.HasPrefix(resp400.Error.Message, "invalid label_selector:"))
+				} else {
+					assert.Equal(t, tc.expectedResponse, res)
+				}
+			}
+		})
+	}
+}
+
+func TestGetProbeById(t *testing.T) {
+	probeID := uuid.New()
+	probe := v1.ProbeObject{Id: probeID, StaticUrl: "https://example.com"}
+
+	testCases := []struct {
+		name             string
+		probeID          uuid.UUID
+		store            probestore.ProbeStorage
+		expectedResponse v1.GetProbeByIdResponseObject
+		expectedErr      string
+	}{
+		{
+			name:             "successfully gets a probe",
+			probeID:          probeID,
+			store:            &mockProbeStore{probes: map[uuid.UUID]v1.ProbeObject{probeID: probe}},
+			expectedResponse: v1.GetProbeById200JSONResponse(probe),
+		},
+		{
+			name:             "returns 404 when probe not found",
+			probeID:          uuid.New(),
+			store:            &mockProbeStore{probes: map[uuid.UUID]v1.ProbeObject{}},
+			expectedResponse: v1.GetProbeById404JSONResponse{},
+		},
+		{
+			name:        "returns error when getting fails",
+			probeID:     probeID,
+			store:       &mockProbeStore{getProbeErr: errors.New("generic get error")},
+			expectedErr: "failed to get probe from storage: generic get error",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := NewServer(tc.store)
+			req := v1.GetProbeByIdRequestObject{ProbeId: tc.probeID}
+
+			res, err := server.GetProbeById(context.Background(), req)
+
+			if tc.expectedErr != "" {
+				require.Error(t, err)
+				assert.EqualError(t, err, tc.expectedErr)
+			} else {
+				require.NoError(t, err)
+				if _, ok := res.(v1.GetProbeById404JSONResponse); ok {
+					assert.IsType(t, tc.expectedResponse, res)
+				} else {
+					assert.Equal(t, tc.expectedResponse, res)
+				}
+			}
+		})
+	}
+}
+
+func TestCreateProbe(t *testing.T) {
+	newURL := "https://example.com/new"
+	urlHashBytes := sha256.Sum256([]byte(newURL))
+	urlHashString := hex.EncodeToString(urlHashBytes[:])[:63]
+
+	testCases := []struct {
+		name             string
+		reqBody          v1.CreateProbeJSONRequestBody
+		store            probestore.ProbeStorage
+		expectedResponse v1.CreateProbeResponseObject
+		expectedErr      string
+	}{
+		{
+			name:             "successfully creates a probe",
+			reqBody:          v1.CreateProbeJSONRequestBody{StaticUrl: newURL},
+			store:            &mockProbeStore{},
+			expectedResponse: v1.CreateProbe201JSONResponse{},
+		},
+		{
+			name:             "returns 409 when url hash exists",
+			reqBody:          v1.CreateProbeJSONRequestBody{StaticUrl: newURL},
+			store:            &mockProbeStore{urlHashes: map[string]bool{urlHashString: true}},
+			expectedResponse: v1.CreateProbe409JSONResponse{},
+		},
+		{
+			name:    "returns error when checking url hash fails",
+			reqBody: v1.CreateProbeJSONRequestBody{StaticUrl: newURL},
+			store: &mockProbeStore{
+				probeWithURLHashExistsErr: errors.New("generic hash check error"),
+			},
+			expectedErr: "failed to check for existing probes: generic hash check error",
+		},
+		{
+			name:    "returns error when creating probe fails",
+			reqBody: v1.CreateProbeJSONRequestBody{StaticUrl: newURL},
+			store: &mockProbeStore{
+				createProbeErr: errors.New("generic create error"),
+			},
+			expectedResponse: v1.CreateProbe500JSONResponse{Error: v1.ErrorObject{Message: "failed to create probe: generic create error"}},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := NewServer(tc.store)
+			req := v1.CreateProbeRequestObject{Body: &tc.reqBody}
+
+			res, err := server.CreateProbe(context.Background(), req)
+
+			if tc.expectedErr != "" {
+				require.Error(t, err)
+				assert.EqualError(t, err, tc.expectedErr)
+			} else {
+				require.NoError(t, err)
+				assert.IsType(t, tc.expectedResponse, res)
+				if resp201, ok := res.(v1.CreateProbe201JSONResponse); ok {
+					assert.Equal(t, newURL, resp201.StaticUrl)
+				}
+			}
+		})
+	}
+}
+
+func TestDeleteProbe(t *testing.T) {
+	probeID := uuid.New()
+
+	testCases := []struct {
+		name             string
+		probeID          uuid.UUID
+		store            probestore.ProbeStorage
+		expectedResponse v1.DeleteProbeResponseObject
+		expectedErr      string
+	}{
+		{
+			name:             "successfully deletes a probe",
+			probeID:          probeID,
+			store:            &mockProbeStore{probes: map[uuid.UUID]v1.ProbeObject{probeID: {}}},
+			expectedResponse: v1.DeleteProbe204Response{},
+		},
+		{
+			name:             "returns 404 when probe not found",
+			probeID:          uuid.New(),
+			store:            &mockProbeStore{probes: map[uuid.UUID]v1.ProbeObject{}},
+			expectedResponse: v1.DeleteProbe404JSONResponse{},
+		},
+		{
+			name:        "returns error when deleting fails",
+			probeID:     probeID,
+			store:       &mockProbeStore{deleteProbeErr: errors.New("generic delete error")},
+			expectedErr: "failed to delete probe from storage: generic delete error",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := NewServer(tc.store)
+			req := v1.DeleteProbeRequestObject{ProbeId: tc.probeID}
+
+			res, err := server.DeleteProbe(context.Background(), req)
+
+			if tc.expectedErr != "" {
+				require.Error(t, err)
+				assert.EqualError(t, err, tc.expectedErr)
+			} else {
+				require.NoError(t, err)
+				assert.IsType(t, tc.expectedResponse, res)
+			}
+		})
+	}
 }
 
 func TestUpdateProbe(t *testing.T) {
