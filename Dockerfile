@@ -1,6 +1,6 @@
 # Use the official Golang image to create a build artifact.
 # This is a multi-stage build, so we'll use a temporary image for the build process.
-FROM registry.access.redhat.com/ubi9/go-toolset:1.24.4 AS builder
+FROM registry.access.redhat.com/ubi9/go-toolset:9.6-1753221510 AS builder
 
 # Set the Current Working Directory inside the container
 WORKDIR /app
