@@ -260,17 +260,16 @@ func main() {
 	startCmd.Flags().String("namespace", "default", "The Kubernetes namespace to store probe configmaps in.")
 
 	// Bind flags to viper
-	viper.BindPFlag("port", startCmd.Flags().Lookup("port"))
-	viper.BindPFlag("host", startCmd.Flags().Lookup("host"))
-	viper.BindPFlag("read_timeout", startCmd.Flags().Lookup("read-timeout"))
-	viper.BindPFlag("write_timeout", startCmd.Flags().Lookup("write-timeout"))
-	viper.BindPFlag("graceful_timeout", startCmd.Flags().Lookup("graceful-timeout"))
-	viper.BindPFlag("database_engine", startCmd.Flags().Lookup("database-engine"))
-	viper.BindPFlag("data_dir", startCmd.Flags().Lookup("data-dir"))
-	viper.BindPFlag("config", startCmd.Flags().Lookup("config"))
-	viper.BindPFlag("log_level", startCmd.Flags().Lookup("log-level"))
-	viper.BindPFlag("kubeconfig", startCmd.Flags().Lookup("kubeconfig"))
-	viper.BindPFlag("namespace", startCmd.Flags().Lookup("namespace"))
+	viper.BindPFlag("port", startCmd.Flags().Lookup("port")) //nolint:errcheck
+	viper.BindPFlag("host", startCmd.Flags().Lookup("host")) //nolint:errcheck
+	viper.BindPFlag("read_timeout", startCmd.Flags().Lookup("read-timeout")) //nolint:errcheck
+	viper.BindPFlag("write_timeout", startCmd.Flags().Lookup("write-timeout")) //nolint:errcheck
+	viper.BindPFlag("graceful_timeout", startCmd.Flags().Lookup("graceful-timeout")) //nolint:errcheck
+	viper.BindPFlag("database_engine", startCmd.Flags().Lookup("database-engine")) //nolint:errcheck
+	viper.BindPFlag("config", startCmd.Flags().Lookup("config")) //nolint:errcheck
+	viper.BindPFlag("log_level", startCmd.Flags().Lookup("log-level")) //nolint:errcheck
+	viper.BindPFlag("kubeconfig", startCmd.Flags().Lookup("kubeconfig")) //nolint:errcheck
+	viper.BindPFlag("namespace", startCmd.Flags().Lookup("namespace")) //nolint:errcheck
 
 	// Add commands to the root command
 	rootCmd.AddCommand(startCmd)
