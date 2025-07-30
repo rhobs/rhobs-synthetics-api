@@ -72,7 +72,7 @@ func TestLocalProbeStore_CreateProbe(t *testing.T) {
 			// Arrange
 			tempDir, err := os.MkdirTemp("", "probe-store-test-*")
 			require.NoError(t, err)
-			defer os.RemoveAll(tempDir)
+			defer os.RemoveAll(tempDir) //nolint:errcheck
 
 			store, err := NewLocalProbeStoreWithDir(tempDir)
 			require.NoError(t, err)
@@ -153,7 +153,7 @@ func TestLocalProbeStore_UpdateProbe(t *testing.T) {
 			// Arrange
 			tempDir, err := os.MkdirTemp("", "probe-store-test-*")
 			require.NoError(t, err)
-			defer os.RemoveAll(tempDir)
+			defer os.RemoveAll(tempDir) //nolint:errcheck
 
 			store, err := NewLocalProbeStoreWithDir(tempDir)
 			require.NoError(t, err)
@@ -242,7 +242,7 @@ func TestLocalProbeStore_ProbeWithURLHashExists(t *testing.T) {
 			// Arrange
 			tempDir, err := os.MkdirTemp("", "probe-store-test-*")
 			require.NoError(t, err)
-			defer os.RemoveAll(tempDir)
+			defer os.RemoveAll(tempDir) //nolint:errcheck
 
 			store, err := NewLocalProbeStoreWithDir(tempDir)
 			require.NoError(t, err)
@@ -339,7 +339,7 @@ func TestLocalProbeStore_ListProbes(t *testing.T) {
 			// Arrange
 			tempDir, err := os.MkdirTemp("", "probe-store-test-*")
 			require.NoError(t, err)
-			defer os.RemoveAll(tempDir)
+			defer os.RemoveAll(tempDir) //nolint:errcheck
 
 			store, err := NewLocalProbeStoreWithDir(tempDir)
 			require.NoError(t, err)

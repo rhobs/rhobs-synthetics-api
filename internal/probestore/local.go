@@ -58,7 +58,7 @@ func NewLocalProbeStoreWithDir(dataDir string) (*LocalProbeStore, error) {
 	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
 		return nil, fmt.Errorf("probe store directory is not writable: %w", err)
 	}
-	os.Remove(testFile) // Clean up test file
+	os.Remove(testFile) //nolint:errcheck
 
 	return &LocalProbeStore{Directory: dataDir}, nil
 }
@@ -185,7 +185,7 @@ func (l *LocalProbeStore) CreateProbe(ctx context.Context, probe v1.ProbeObject,
 	}
 
 	if err := os.Rename(tempPath, filePath); err != nil {
-		os.Remove(tempPath) // Clean up temp file on error
+		os.Remove(tempPath) //nolint:errcheck
 		return nil, fmt.Errorf("failed to finalize probe file: %w", err)
 	}
 
@@ -243,7 +243,7 @@ func (l *LocalProbeStore) UpdateProbe(ctx context.Context, probe v1.ProbeObject)
 	}
 
 	if err := os.Rename(tempPath, filePath); err != nil {
-		os.Remove(tempPath) // Clean up temp file on error
+		os.Remove(tempPath) //nolint:errcheck
 		return nil, fmt.Errorf("failed to finalize updated probe file: %w", err)
 	}
 
