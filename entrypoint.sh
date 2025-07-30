@@ -5,7 +5,6 @@ ARGS="start"
 
 # Check if APP_ENV is set to "dev"
 if [ "$APP_ENV" = "dev" ]; then
-  echo "Development mode enabled: using 'local' database engine."
   ARGS="$ARGS --database-engine local"
 fi
 

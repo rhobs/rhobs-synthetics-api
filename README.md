@@ -42,7 +42,8 @@ Flag | Type | Default | Description
 `--read-timeout` | duration | `5s` | Max duration for reading the entire request
 `--write-timeout` | duration | `10s` | Max duration before timing out writes
 `--graceful-timeout` | duration | `15s` | Time allowed for graceful shutdown
-`--database-engine` | string | `"etcd"` | Backend database engine (e.g., etcd, postgres)
+`--database-engine` | string | `"etcd"` | Backend database engine (e.g., etcd, local)
+`--data-dir` | string | `"data"` | Directory for local storage (only valid with --database-engine=local)
 `--log-level` | string | `"info"` | Log verbosity: debug, info (`debug`, `info`)
 `--config` | string | `(none)` | Path to YAML config file
 `--kubeconfig` | string | `(none)` | Path to kubeconfig file (optional, for out-of-cluster development)
@@ -65,7 +66,8 @@ kubeconfig: "/path/to/your/kubeconfig" # Optional, for out-of-cluster developmen
 namespace: "my-probes-namespace"     # Namespace to store probe configmaps
 
 # Database configuration
-database_engine: "etcd"    # Supported: etcd, postgres, mysql (as implemented)
+database_engine: "etcd"    # Supported: etcd, local
+data_dir: "/path/to/data"  # Directory for local storage (only used with 'local' engine)
 
 # Logging
 log_level: "info"          # Options: debug, info
@@ -102,7 +104,7 @@ docker run -p 8080:8080 -e APP_ENV=dev rhobs-synthetics-api
 
 Create an example probe config:
 ```
-$ curl -s -X POST http://localhost:8080/metrics/probes \
+$ curl -s -X POST http://localhost:8080/probes \
 -H 'Content-Type: application/json' \
 -d '{
   "static_url": "https://api.mycluster.example.com/livez",
@@ -140,7 +142,7 @@ metadata:
 
 **Get all probes**
 ```
-$ curl -s 'http://localhost:8080/metrics/probes' | jq
+$ curl -s 'http://localhost:8080/probes' | jq
 
 {
   "probes": [
@@ -168,7 +170,7 @@ $ curl -s 'http://localhost:8080/metrics/probes' | jq
 
 **Get all probes using filters**
 ```
-$ curl -s 'http://localhost:8080/metrics/probes?label_selector=private=false,management-cluster-id=8e0a074c-f1e3-4957-be75-425e611142e4' | jq
+$ curl -s 'http://localhost:8080/probes?label_selector=private=false,management-cluster-id=8e0a074c-f1e3-4957-be75-425e611142e4' | jq
 
 {
   "probes": [
@@ -187,7 +189,7 @@ $ curl -s 'http://localhost:8080/metrics/probes?label_selector=private=false,man
 
 **Get single probe by ID**
 ```
-$ curl -s 'http://localhost:8080/metrics/probes/176937a9-a1bb-4163-b602-a1416abe2f3c' | jq
+$ curl -s 'http://localhost:8080/probes/176937a9-a1bb-4163-b602-a1416abe2f3c' | jq
 
 {
   "id": "176937a9-a1bb-4163-b602-a1416abe2f3c",
@@ -204,7 +206,7 @@ $ curl -s 'http://localhost:8080/metrics/probes/176937a9-a1bb-4163-b602-a1416abe
 ```
 curl -s -X PATCH -H "Content-Type: application/json" \
   -d '{"status": "active"}' \
-  http://localhost:8080/metrics/probes/06581d72-ce30-4ff6-a761-6b0b972257cc | jq
+  http://localhost:8080/probes/06581d72-ce30-4ff6-a761-6b0b972257cc | jq
 {
   "id": "06581d72-ce30-4ff6-a761-6b0b972257cc",
   "labels": {
@@ -221,5 +223,5 @@ curl -s -X PATCH -H "Content-Type: application/json" \
 
 ** Delete single probe by ID**
 ```
-$ curl -s -X DELETE http://localhost:8080/metrics/probes/176937a9-a1bb-4163-b602-a1416abe2f3c
+$ curl -s -X DELETE http://localhost:8080/probes/176937a9-a1bb-4163-b602-a1416abe2f3c
 ```

@@ -15,7 +15,7 @@ MAIN_PACKAGE=./cmd/api/main.go
 # podman vs. docker
 CONTAINER_ENGINE ?= podman
 
-.PHONY: all build clean run help lint lint-fix lint-ci tidy generate ensure-oapi-codegen docker-build docker-push
+.PHONY: all build clean run help lint lint-fix lint-ci go-mod-tidy go-mod-download generate ensure-oapi-codegen docker-build docker-push
 
 all: build
 
@@ -43,7 +43,7 @@ GOLANGCI_LINT_BIN := $(shell go env GOPATH)/bin/golangci-lint
 lint: $(GOLANGCI_LINT_BIN)
 	$(GOLANGCI_LINT_BIN) run ./...
 
-lint-ci:
+lint-ci: $(GOLANGCI_LINT_BIN)
 	$(GOLANGCI_LINT_BIN) run ./... --output.text.path=stdout --timeout=5m
 
 lint-fix: $(GOLANGCI_LINT_BIN)
@@ -58,11 +58,14 @@ $(GOLANGCI_LINT_BIN):
 		echo "golangci-lint already installed."; \
 	fi
 
-test:
+test: go-mod-download
 	go test -cover ./...
 
-tidy:
+go-mod-tidy:
 	go mod tidy
+
+go-mod-download:
+	go mod download
 
 # Build the Docker image
 docker-build:
