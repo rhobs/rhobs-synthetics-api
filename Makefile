@@ -14,6 +14,7 @@ BINARY_NAME=rhobs-synthetics-api
 MAIN_PACKAGE=./cmd/api/main.go
 # podman vs. docker
 CONTAINER_ENGINE ?= podman
+TESTOPTS ?= -cover
 
 .PHONY: all build clean run help lint lint-fix lint-ci go-mod-tidy go-mod-download generate ensure-oapi-codegen docker-build docker-push
 
@@ -59,7 +60,11 @@ $(GOLANGCI_LINT_BIN):
 	fi
 
 test: go-mod-download
-	go test -cover ./...
+	go test $(TESTOPTS) ./...
+
+.PHONY: coverage
+coverage:
+	hack/codecov.sh
 
 go-mod-tidy:
 	go mod tidy
