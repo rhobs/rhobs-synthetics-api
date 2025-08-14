@@ -17,7 +17,7 @@ COV_THREAD_COUNT=${COV_THREAD_COUNT:-4}
 make -C "${REPO_ROOT}" test TESTOPTS="-coverprofile=${COVER_PROFILE}.tmp -covermode=atomic -coverpkg=./... -p ${COV_THREAD_COUNT}"
 
 # Remove generated files from coverage profile
-grep -v "zz_generated" "${COVER_PROFILE}.tmp" > "${COVER_PROFILE}"
+grep -v "pkg/apis/v1" "${COVER_PROFILE}.tmp" > "${COVER_PROFILE}"
 rm -f "${COVER_PROFILE}.tmp"
 
 # Configure the git refs and job link based on how the job was triggered via prow

@@ -28,3 +28,4 @@ comment:
 ignore:
   - "**/mocks"
   - "**/zz_generated*.go"
+  - "**/pkg/apis/v1/*.go
