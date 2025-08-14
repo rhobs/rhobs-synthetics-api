@@ -422,3 +422,76 @@ func TestKubernetesProbeStore_DeleteProbe(t *testing.T) {
 		})
 	}
 }
+
+func TestKubernetesProbeStore_ProbeWithURLHashExists(t *testing.T) {
+	ctx := context.Background()
+	urlHash := "test-url-hash"
+	
+	probeID := uuid.New()
+	probe := v1.ProbeObject{
+		Id:        probeID,
+		StaticUrl: "http://example.com",
+		Status:    v1.Active,
+		Labels:    &v1.LabelsSchema{"env": "test"},
+	}
+	
+	// ConfigMap with the URL hash we're looking for
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf(probeConfigMapNameFormat, probeID),
+			Namespace: testNamespace,
+			Labels: map[string]string{
+				baseAppLabelKey:        baseAppLabelValue,
+				probeURLHashLabelKey:   urlHash,
+				probeStatusLabelKey:    string(v1.Active),
+			},
+		},
+		Data: map[string]string{"probe-config.json": mustMarshal(t, probe)},
+	}
+
+	testCases := []struct {
+		name        string
+		urlHash     string
+		clientset   *fake.Clientset
+		expectExists bool
+		expectErr   bool
+	}{
+		{
+			name:         "probe with URL hash exists",
+			urlHash:      urlHash,
+			clientset:    fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, cm),
+			expectExists: true,
+			expectErr:    false,
+		},
+		{
+			name:         "probe with URL hash does not exist",
+			urlHash:      "different-hash",
+			clientset:    fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, cm),
+			expectExists: false,
+			expectErr:    false,
+		},
+		{
+			name:         "no probes exist",
+			urlHash:      urlHash,
+			clientset:    fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}),
+			expectExists: false,
+			expectErr:    false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			store, err := NewKubernetesProbeStore(ctx, tc.clientset, testNamespace)
+			require.NoError(t, err)
+
+			exists, err := store.ProbeWithURLHashExists(ctx, tc.urlHash)
+
+			if tc.expectErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tc.expectExists, exists)
+			}
+		})
+	}
+}

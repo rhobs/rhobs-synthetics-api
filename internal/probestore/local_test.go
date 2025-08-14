@@ -13,6 +13,79 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestNewLocalProbeStore(t *testing.T) {
+	// Clean up any existing default directory
+	if _, err := os.Stat(localProbeStoreDir); err == nil {
+		defer os.RemoveAll(localProbeStoreDir) //nolint:errcheck
+	}
+
+	store, err := NewLocalProbeStore()
+
+	require.NoError(t, err)
+	assert.NotNil(t, store)
+	assert.Equal(t, localProbeStoreDir, store.Directory)
+
+	// Verify directory was created
+	info, err := os.Stat(localProbeStoreDir)
+	require.NoError(t, err)
+	assert.True(t, info.IsDir())
+}
+
+func TestNewLocalProbeStoreWithDir(t *testing.T) {
+	testCases := []struct {
+		name        string
+		dataDir     string
+		expectErr   bool
+		expectedDir string
+	}{
+		{
+			name:        "creates store with custom directory",
+			dataDir:     "/tmp/test-probes-custom",
+			expectErr:   false,
+			expectedDir: "/tmp/test-probes-custom",
+		},
+		{
+			name:        "falls back to default when empty string provided",
+			dataDir:     "",
+			expectErr:   false,
+			expectedDir: localProbeStoreDir,
+		},
+		{
+			name:      "fails when directory is not writable",
+			dataDir:   "/root/test-probes", // Assuming this won't be writable
+			expectErr: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Clean up before and after test
+			if tc.dataDir != "" && tc.dataDir != localProbeStoreDir {
+				defer os.RemoveAll(tc.dataDir) //nolint:errcheck
+			}
+			if tc.expectedDir == localProbeStoreDir {
+				defer os.RemoveAll(localProbeStoreDir) //nolint:errcheck
+			}
+
+			store, err := NewLocalProbeStoreWithDir(tc.dataDir)
+
+			if tc.expectErr {
+				require.Error(t, err)
+				assert.Nil(t, store)
+			} else {
+				require.NoError(t, err)
+				assert.NotNil(t, store)
+				assert.Equal(t, tc.expectedDir, store.Directory)
+
+				// Verify directory exists and is writable
+				info, err := os.Stat(tc.expectedDir)
+				require.NoError(t, err)
+				assert.True(t, info.IsDir())
+			}
+		})
+	}
+}
+
 func TestLocalProbeStore_CreateProbe(t *testing.T) {
 	ctx := context.Background()
 	probeID := uuid.New()
@@ -368,4 +441,56 @@ func TestLocalProbeStore_ListProbes(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLocalProbeStore_AdditionalErrorHandling(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("ListProbes with directory scan errors", func(t *testing.T) {
+		tempDir, err := os.MkdirTemp("", "probe-store-test-*")
+		require.NoError(t, err)
+		defer os.RemoveAll(tempDir) //nolint:errcheck
+
+		store, err := NewLocalProbeStoreWithDir(tempDir)
+		require.NoError(t, err)
+
+		// Create a file with invalid JSON
+		invalidJSONFile := filepath.Join(tempDir, "invalid.json")
+		err = os.WriteFile(invalidJSONFile, []byte("{invalid json"), 0644)
+		require.NoError(t, err)
+
+		// Create a valid probe for comparison
+		validProbe := v1.ProbeObject{
+			Id:        uuid.New(),
+			StaticUrl: "http://example.com/valid",
+			Status:    v1.Active,
+		}
+		_, err = store.CreateProbe(ctx, validProbe, "valid-hash")
+		require.NoError(t, err)
+
+		// ListProbes should skip the invalid file but still return valid probes
+		probes, err := store.ListProbes(ctx, fmt.Sprintf("%s=%s", baseAppLabelKey, baseAppLabelValue))
+		require.NoError(t, err)
+		assert.Len(t, probes, 1)
+		assert.Equal(t, validProbe.Id, probes[0].Id)
+	})
+
+	t.Run("ProbeWithURLHashExists with malformed files", func(t *testing.T) {
+		tempDir, err := os.MkdirTemp("", "probe-store-test-*")
+		require.NoError(t, err)
+		defer os.RemoveAll(tempDir) //nolint:errcheck
+
+		store, err := NewLocalProbeStoreWithDir(tempDir)
+		require.NoError(t, err)
+
+		// Create a file with invalid JSON
+		invalidJSONFile := filepath.Join(tempDir, "invalid.json")
+		err = os.WriteFile(invalidJSONFile, []byte("{invalid json"), 0644)
+		require.NoError(t, err)
+
+		// Should not find hash in malformed file
+		exists, err := store.ProbeWithURLHashExists(ctx, "some-hash")
+		require.NoError(t, err)
+		assert.False(t, exists)
+	})
 }

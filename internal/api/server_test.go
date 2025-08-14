@@ -135,6 +135,16 @@ func TestListProbes(t *testing.T) {
 			},
 		},
 		{
+			name:   "successfully lists probes with valid label selector",
+			params: v1.ListProbesParams{LabelSelector: func() *string { s := "env=prod"; return &s }()},
+			store: &mockProbeStore{
+				probes: map[uuid.UUID]v1.ProbeObject{
+					probe1ID: probes[0],
+				},
+			},
+			expectedResponse: v1.ListProbes200JSONResponse(v1.ProbesArrayResponse{Probes: []v1.ProbeObject{probes[0]}}),
+		},
+		{
 			name:   "returns error when listing fails",
 			params: v1.ListProbesParams{},
 			store: &mockProbeStore{
@@ -158,6 +168,10 @@ func TestListProbes(t *testing.T) {
 				require.NoError(t, err)
 				if resp400, ok := res.(v1.ListProbes400JSONResponse); ok {
 					assert.True(t, strings.HasPrefix(resp400.Error.Message, "invalid label_selector:"))
+				} else if resp200, ok := res.(v1.ListProbes200JSONResponse); ok {
+					expectedResp, expectedOk := tc.expectedResponse.(v1.ListProbes200JSONResponse)
+					require.True(t, expectedOk)
+					assert.ElementsMatch(t, expectedResp.Probes, resp200.Probes)
 				} else {
 					assert.Equal(t, tc.expectedResponse, res)
 				}

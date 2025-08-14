@@ -65,6 +65,9 @@ test: go-mod-download
 .PHONY: coverage
 coverage:
 	hack/codecov.sh
+	@echo ""
+	@echo "Overall coverage:"
+	@go tool cover -func=coverage.out | tail -1
 
 go-mod-tidy:
 	go mod tidy
