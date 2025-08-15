@@ -15,33 +15,25 @@ import (
 	"github.com/rhobs/rhobs-synthetics-api/internal/api"
 	"github.com/rhobs/rhobs-synthetics-api/internal/probestore"
 	v1 "github.com/rhobs/rhobs-synthetics-api/pkg/apis/v1"
+	"github.com/rhobs/rhobs-synthetics-api/pkg/kubeclient"
 	"github.com/rhobs/rhobs-synthetics-api/web"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 func createKubernetesClientset() (*kubernetes.Clientset, error) {
-	// Try to create in-cluster config
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		// If in-cluster fails, try to use kubeconfig
-		log.Printf("Could not create in-cluster config: %v. Trying to use kubeconfig.", err)
-		kubeconfigPath := viper.GetString("kubeconfig")
-		config, err = clientcmd.BuildConfigFromFlags("", kubeconfigPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create kubernetes client config from kubeconfig: %w", err)
-		}
+	cfg := kubeclient.Config{
+		KubeconfigPath: viper.GetString("kubeconfig"),
 	}
 
-	clientset, err := kubernetes.NewForConfig(config)
+	client, err := kubeclient.NewClient(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
 	}
-	return clientset, nil
+
+	return client.Clientset().(*kubernetes.Clientset), nil
 }
 
 func createRouter(validatedAPI http.Handler, clientset *kubernetes.Clientset, swagger *openapi3.T) http.Handler {
