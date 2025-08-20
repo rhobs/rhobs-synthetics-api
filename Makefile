@@ -16,7 +16,7 @@ MAIN_PACKAGE=./cmd/api/main.go
 CONTAINER_ENGINE ?= podman
 TESTOPTS ?= -cover
 
-.PHONY: all build clean run help lint lint-fix lint-ci go-mod-tidy go-mod-download generate ensure-oapi-codegen docker-build docker-push
+.PHONY: all build clean run help lint lint-fix lint-ci go-mod-tidy go-mod-download generate ensure-oapi-codegen docker-build docker-push test-templates
 
 all: build
 
@@ -61,6 +61,11 @@ $(GOLANGCI_LINT_BIN):
 
 test: go-mod-download
 	go test $(TESTOPTS) ./...
+
+# Test only the OpenShift templates
+test-templates:
+	@echo "Running template tests..."
+	go test $(TESTOPTS) ./templates/
 
 .PHONY: coverage
 coverage:
