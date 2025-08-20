@@ -35,8 +35,10 @@ COPY --from=builder /app/rhobs-synthetics-api ./
 COPY entrypoint.sh ./
 
 # Create a data directory for local storage if needed and set permissions
+# Make files executable by group and others to support OpenShift arbitrary UIDs
 RUN mkdir -p /home/rhobs/data && \
-    chown -R rhobs:rhobs /home/rhobs && \
+    chown -R rhobs:0 /home/rhobs && \
+    chmod -R g=u /home/rhobs && \
     chmod +x ./entrypoint.sh ./rhobs-synthetics-api
 
 # Expose port 8080 to the outside world.
