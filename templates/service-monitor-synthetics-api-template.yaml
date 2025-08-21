@@ -1,0 +1,38 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: synthetics-api-service-monitor
+objects:
+- apiVersion: monitoring.coreos.com/v1
+  kind: ServiceMonitor
+  metadata:
+    labels:
+      app.kubernetes.io/component: synthetics-api
+      app.kubernetes.io/instance: rhobs
+      app.kubernetes.io/name: synthetics-api
+      app.kubernetes.io/part-of: rhobs
+      app.kubernetes.io/version: ${IMAGE_TAG}
+      prometheus: app-sre
+    name: synthetics-api
+    namespace: ${NAMESPACE}
+  spec:
+    endpoints:
+    - honorLabels: true
+      interval: 30s
+      path: /metrics
+      port: metrics
+    namespaceSelector:
+      matchNames:
+      - ${NAMESPACE}
+    selector:
+      matchLabels:
+        app.kubernetes.io/component: synthetics-api
+        app.kubernetes.io/instance: rhobs
+        app.kubernetes.io/name: synthetics-api
+        app.kubernetes.io/part-of: rhobs
+        app.kubernetes.io/version: ${IMAGE_TAG}
+parameters:
+- name: IMAGE_TAG
+  value: latest
+- name: NAMESPACE
+  value: rhobs

@@ -225,3 +225,42 @@ curl -s -X PATCH -H "Content-Type: application/json" \
 ```
 $ curl -s -X DELETE http://localhost:8080/probes/176937a9-a1bb-4163-b602-a1416abe2f3c
 ```
+
+## OpenShift Deployment Templates
+
+This repository includes OpenShift templates for deploying the synthetics API in OpenShift environments:
+
+### Templates
+
+* `templates/synthetics-api-template.yaml` - Main deployment template containing:
+  - Service (headless service on port 11211)
+  - ServiceAccount
+  - StatefulSet with resource limits and requests
+
+* `templates/service-monitor-synthetics-api-template.yaml` - Prometheus monitoring template containing:
+  - ServiceMonitor for metrics collection on `/metrics` endpoint
+
+### Deploying with OpenShift Templates
+
+To deploy the synthetics API using the OpenShift templates:
+
+```sh
+# Deploy the main application
+oc process -f templates/synthetics-api-template.yaml \
+  -p IMAGE_TAG=latest \
+  -p NAMESPACE=rhobs | oc apply -f -
+
+# Deploy the service monitor for metrics
+oc process -f templates/service-monitor-synthetics-api-template.yaml \
+  -p NAMESPACE=rhobs | oc apply -f -
+```
+
+### Template Parameters
+
+**synthetics-api-template.yaml:**
+- `IMAGE_TAG` - Container image tag (default: latest)
+- `NAMESPACE` - Target namespace (default: rhobs)
+
+**service-monitor-synthetics-api-template.yaml:**
+- `IMAGE_TAG` - Container image tag (default: latest)
+- `NAMESPACE` - Target namespace for both the application and ServiceMonitor (default: rhobs)
