@@ -15,7 +15,10 @@ objects:
     name: synthetics-api
     namespace: ${NAMESPACE}
   spec:
-    clusterIP: None
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
     ports:
     - name: synthetics-api
       port: 11211
@@ -27,6 +30,7 @@ objects:
       app.kubernetes.io/name: synthetics-api
       app.kubernetes.io/part-of: rhobs
       app.kubernetes.io/version: ${IMAGE_TAG}
+    type: ClusterIP
 - apiVersion: v1
   kind: ServiceAccount
   metadata:
