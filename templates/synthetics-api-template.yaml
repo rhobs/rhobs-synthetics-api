@@ -42,6 +42,40 @@ objects:
       app.kubernetes.io/version: ${IMAGE_TAG}
     name: synthetics-api
     namespace: ${NAMESPACE}
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: Role
+  metadata:
+    labels:
+      app.kubernetes.io/component: synthetics-api
+      app.kubernetes.io/instance: rhobs
+      app.kubernetes.io/name: synthetics-api
+      app.kubernetes.io/part-of: rhobs
+      app.kubernetes.io/version: ${IMAGE_TAG}
+    name: synthetics-api
+    namespace: ${NAMESPACE}
+  rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "create", "update", "delete"]
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: RoleBinding
+  metadata:
+    labels:
+      app.kubernetes.io/component: synthetics-api
+      app.kubernetes.io/instance: rhobs
+      app.kubernetes.io/name: synthetics-api
+      app.kubernetes.io/part-of: rhobs
+      app.kubernetes.io/version: ${IMAGE_TAG}
+    name: synthetics-api
+    namespace: ${NAMESPACE}
+  roleRef:
+    apiGroup: rbac.authorization.k8s.io
+    kind: Role
+    name: synthetics-api
+  subjects:
+  - kind: ServiceAccount
+    name: synthetics-api
+    namespace: ${NAMESPACE}
 - apiVersion: apps/v1
   kind: StatefulSet
   metadata:
