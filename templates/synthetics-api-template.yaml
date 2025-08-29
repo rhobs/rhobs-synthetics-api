@@ -88,7 +88,7 @@ objects:
     name: synthetics-api
     namespace: ${NAMESPACE}
   spec:
-    podManagementPolicy: OrderedReady
+    podManagementPolicy: Parallel
     replicas: 1
     selector:
       matchLabels:
@@ -118,6 +118,20 @@ objects:
           - containerPort: 8080
             name: synthetics-api
             protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
           resources:
             limits:
               cpu: "1"
@@ -127,6 +141,7 @@ objects:
               memory: 100Mi
           terminationMessagePolicy: FallbackToLogsOnError
         serviceAccountName: synthetics-api
+        terminationGracePeriodSeconds: 30
 parameters:
 - name: IMAGE_TAG
   value: latest

@@ -233,7 +233,7 @@ This repository includes OpenShift templates for deploying the synthetics API in
 ### Templates
 
 * `templates/synthetics-api-template.yaml` - Main deployment template containing:
-  - Service (headless service on port 11211)
+  - Service (service on port 8080)
   - ServiceAccount
   - StatefulSet with resource limits and requests
 
