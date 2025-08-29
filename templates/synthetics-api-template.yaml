@@ -21,9 +21,9 @@ objects:
     ipFamilyPolicy: SingleStack
     ports:
     - name: synthetics-api
-      port: 11211
+      port: 8080
       protocol: TCP
-      targetPort: 11211
+      targetPort: 8080
     selector:
       app.kubernetes.io/component: synthetics-api
       app.kubernetes.io/instance: rhobs
@@ -77,8 +77,11 @@ objects:
         - image: quay.io/redhat-services-prod/openshift/rhobs-synthetics-api:${IMAGE_TAG}
           imagePullPolicy: IfNotPresent
           name: synthetics-api
+          env:
+          - name: NAMESPACE
+            value: ${NAMESPACE}
           ports:
-          - containerPort: 11211
+          - containerPort: 8080
             name: synthetics-api
             protocol: TCP
           resources:

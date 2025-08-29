@@ -249,7 +249,7 @@ func main() {
 	startCmd.Flags().String("database-engine", "etcd", "Specifies the backend database engine. Supported: 'etcd', 'local'.")
 	startCmd.Flags().String("data-dir", "", "Directory for local storage (only valid with --database-engine=local, defaults to 'data')")
 	startCmd.Flags().String("kubeconfig", "", "Path to kubeconfig file (optional, for out-of-cluster development)")
-	startCmd.Flags().String("namespace", "default", "The Kubernetes namespace to store probe configmaps in.")
+	startCmd.Flags().String("namespace", "rhobs", "The Kubernetes namespace to store probe configmaps in.")
 
 	// Bind flags to viper
 	viper.BindPFlag("port", startCmd.Flags().Lookup("port")) //nolint:errcheck
@@ -262,6 +262,9 @@ func main() {
 	viper.BindPFlag("log_level", startCmd.Flags().Lookup("log-level")) //nolint:errcheck
 	viper.BindPFlag("kubeconfig", startCmd.Flags().Lookup("kubeconfig")) //nolint:errcheck
 	viper.BindPFlag("namespace", startCmd.Flags().Lookup("namespace")) //nolint:errcheck
+
+	// Bind environment variables to viper
+	viper.BindEnv("namespace", "NAMESPACE") //nolint:errcheck
 
 	// Add commands to the root command
 	rootCmd.AddCommand(startCmd)
