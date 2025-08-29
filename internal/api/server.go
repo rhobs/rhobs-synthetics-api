@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log"
 
 	"github.com/google/uuid"
 	"github.com/rhobs/rhobs-synthetics-api/internal/probestore"
@@ -52,6 +53,7 @@ func (s Server) ListProbes(ctx context.Context, request v1.ListProbesRequestObje
 
 	probes, err := s.Store.ListProbes(ctx, finalSelector)
 	if err != nil {
+		log.Printf("Error listing probes from storage: %v", err)
 		return nil, fmt.Errorf("failed to list probes from storage: %w", err)
 	}
 
@@ -69,6 +71,7 @@ func (s Server) GetProbeById(ctx context.Context, request v1.GetProbeByIdRequest
 				},
 			}, nil
 		}
+		log.Printf("Error getting probe %s from storage: %v", request.ProbeId, err)
 		return nil, fmt.Errorf("failed to get probe from storage: %w", err)
 	}
 
@@ -82,6 +85,7 @@ func (s Server) CreateProbe(ctx context.Context, request v1.CreateProbeRequestOb
 
 	exists, err := s.Store.ProbeWithURLHashExists(ctx, urlHashString)
 	if err != nil {
+		log.Printf("Error checking for existing probes with URL hash %s: %v", urlHashString, err)
 		return nil, fmt.Errorf("failed to check for existing probes: %w", err)
 	}
 
@@ -102,6 +106,7 @@ func (s Server) CreateProbe(ctx context.Context, request v1.CreateProbeRequestOb
 
 	createdProbe, err := s.Store.CreateProbe(ctx, probeToStore, urlHashString)
 	if err != nil {
+		log.Printf("Error creating probe %s: %v", probeToStore.Id, err)
 		return v1.CreateProbe500JSONResponse{
 			Error: v1.ErrorObject{
 				Message: fmt.Sprintf("failed to create probe: %v", err),
@@ -124,6 +129,7 @@ func (s Server) UpdateProbe(ctx context.Context, request v1.UpdateProbeRequestOb
 				},
 			}, nil
 		}
+		log.Printf("Error getting probe %s from storage for update: %v", request.ProbeId, err)
 		return nil, fmt.Errorf("failed to get probe from storage for update: %w", err)
 	}
 
@@ -135,6 +141,7 @@ func (s Server) UpdateProbe(ctx context.Context, request v1.UpdateProbeRequestOb
 	// Persist the updated probe.
 	updatedProbe, err := s.Store.UpdateProbe(ctx, *existingProbe)
 	if err != nil {
+		log.Printf("Error updating probe %s in storage: %v", request.ProbeId, err)
 		return nil, fmt.Errorf("failed to update probe in storage: %w", err)
 	}
 
@@ -152,6 +159,7 @@ func (s Server) DeleteProbe(ctx context.Context, request v1.DeleteProbeRequestOb
 				},
 			}, nil
 		}
+		log.Printf("Error deleting probe %s from storage: %v", request.ProbeId, err)
 		return nil, fmt.Errorf("failed to delete probe from storage: %w", err)
 	}
 
