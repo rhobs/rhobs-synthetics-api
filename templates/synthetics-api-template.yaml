@@ -11,7 +11,6 @@ objects:
       app.kubernetes.io/instance: rhobs
       app.kubernetes.io/name: synthetics-api
       app.kubernetes.io/part-of: rhobs
-      app.kubernetes.io/version: ${IMAGE_TAG}
     name: synthetics-api
     namespace: ${NAMESPACE}
   spec:
@@ -29,7 +28,6 @@ objects:
       app.kubernetes.io/instance: rhobs
       app.kubernetes.io/name: synthetics-api
       app.kubernetes.io/part-of: rhobs
-      app.kubernetes.io/version: ${IMAGE_TAG}
     type: ClusterIP
 - apiVersion: v1
   kind: ServiceAccount
@@ -39,7 +37,6 @@ objects:
       app.kubernetes.io/instance: rhobs
       app.kubernetes.io/name: synthetics-api
       app.kubernetes.io/part-of: rhobs
-      app.kubernetes.io/version: ${IMAGE_TAG}
     name: synthetics-api
     namespace: ${NAMESPACE}
 - apiVersion: rbac.authorization.k8s.io/v1
@@ -50,7 +47,6 @@ objects:
       app.kubernetes.io/instance: rhobs
       app.kubernetes.io/name: synthetics-api
       app.kubernetes.io/part-of: rhobs
-      app.kubernetes.io/version: ${IMAGE_TAG}
     name: synthetics-api
     namespace: ${NAMESPACE}
   rules:
@@ -65,7 +61,6 @@ objects:
       app.kubernetes.io/instance: rhobs
       app.kubernetes.io/name: synthetics-api
       app.kubernetes.io/part-of: rhobs
-      app.kubernetes.io/version: ${IMAGE_TAG}
     name: synthetics-api
     namespace: ${NAMESPACE}
   roleRef:
@@ -84,7 +79,6 @@ objects:
       app.kubernetes.io/instance: rhobs
       app.kubernetes.io/name: synthetics-api
       app.kubernetes.io/part-of: rhobs
-      app.kubernetes.io/version: ${IMAGE_TAG}
     name: synthetics-api
     namespace: ${NAMESPACE}
   spec:
@@ -96,7 +90,6 @@ objects:
         app.kubernetes.io/instance: rhobs
         app.kubernetes.io/name: synthetics-api
         app.kubernetes.io/part-of: rhobs
-        app.kubernetes.io/version: ${IMAGE_TAG}
     serviceName: synthetics-api
     template:
       metadata:
@@ -105,7 +98,6 @@ objects:
           app.kubernetes.io/instance: rhobs
           app.kubernetes.io/name: synthetics-api
           app.kubernetes.io/part-of: rhobs
-          app.kubernetes.io/version: ${IMAGE_TAG}
       spec:
         containers:
         - image: quay.io/redhat-services-prod/openshift/rhobs-synthetics-api:${IMAGE_TAG}
@@ -140,8 +132,30 @@ objects:
               cpu: 100m
               memory: 100Mi
           terminationMessagePolicy: FallbackToLogsOnError
+          volumeMounts:
+          - name: api-data
+            mountPath: /data
         serviceAccountName: synthetics-api
         terminationGracePeriodSeconds: 30
+  volumeClaimTemplates:
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: api-data
+      namespace: ${NAMESPACE}
+      labels:
+        app.kubernetes.io/component: synthetics-api
+        app.kubernetes.io/instance: rhobs
+        app.kubernetes.io/name: synthetics-api
+        app.kubernetes.io/part-of: rhobs
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 1Gi
+      storageClassName: gp2
+      volumeMode: Filesystem
 parameters:
 - name: IMAGE_TAG
   value: latest
