@@ -72,7 +72,7 @@ objects:
     name: synthetics-api
     namespace: ${NAMESPACE}
 - apiVersion: apps/v1
-  kind: StatefulSet
+  kind: Deployment
   metadata:
     labels:
       app.kubernetes.io/component: synthetics-api
@@ -82,15 +82,18 @@ objects:
     name: synthetics-api
     namespace: ${NAMESPACE}
   spec:
-    podManagementPolicy: Parallel
     replicas: 1
+    strategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxUnavailable: 25%
+        maxSurge: 25%
     selector:
       matchLabels:
         app.kubernetes.io/component: synthetics-api
         app.kubernetes.io/instance: rhobs
         app.kubernetes.io/name: synthetics-api
         app.kubernetes.io/part-of: rhobs
-    serviceName: synthetics-api
     template:
       metadata:
         labels:
