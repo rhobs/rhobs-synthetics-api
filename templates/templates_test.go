@@ -60,9 +60,9 @@ func TestSyntheticsAPITemplateStructure(t *testing.T) {
 	}
 
 	expectedKinds := map[string]bool{
-		"Service":     false,
+		"Service":        false,
 		"ServiceAccount": false,
-		"StatefulSet": false,
+		"Deployment":     false,
 	}
 
 	for _, obj := range objects {
