@@ -20,7 +20,7 @@ objects:
     - honorLabels: true
       interval: 30s
       path: /metrics
-      port: metrics
+      port: http
     namespaceSelector:
       matchNames:
       - ${NAMESPACE}
@@ -30,7 +30,6 @@ objects:
         app.kubernetes.io/instance: rhobs
         app.kubernetes.io/name: synthetics-api
         app.kubernetes.io/part-of: rhobs
-        app.kubernetes.io/version: ${IMAGE_TAG}
 parameters:
 - name: IMAGE_TAG
   value: latest

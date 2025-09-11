@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/rhobs/rhobs-synthetics-api/internal/metrics"
 	"github.com/rhobs/rhobs-synthetics-api/internal/probestore"
 	v1 "github.com/rhobs/rhobs-synthetics-api/pkg/apis/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -33,6 +35,7 @@ func NewServer(store probestore.ProbeStorage) Server {
 
 // (GET /probes)
 func (s Server) ListProbes(ctx context.Context, request v1.ListProbesRequestObject) (v1.ListProbesResponseObject, error) {
+	defer metrics.RecordProbestoreRequest("list_probes", time.Now())
 	baseSelector := fmt.Sprintf("%s=%s", baseAppLabelKey, baseAppLabelValue)
 	finalSelector := baseSelector
 
@@ -42,6 +45,7 @@ func (s Server) ListProbes(ctx context.Context, request v1.ListProbesRequestObje
 		// Validate the user-provided selector syntax
 		_, err := labels.Parse(userSelector)
 		if err != nil {
+			metrics.RecordProbestoreError("list_probes")
 			return v1.ListProbes400JSONResponse{
 				Error: v1.ErrorObject{
 					Message: fmt.Sprintf("invalid label_selector: %v", err),
@@ -53,6 +57,7 @@ func (s Server) ListProbes(ctx context.Context, request v1.ListProbesRequestObje
 
 	probes, err := s.Store.ListProbes(ctx, finalSelector)
 	if err != nil {
+		metrics.RecordProbestoreError("list_probes")
 		log.Printf("Error listing probes from storage: %v", err)
 		return nil, fmt.Errorf("failed to list probes from storage: %w", err)
 	}
@@ -62,8 +67,10 @@ func (s Server) ListProbes(ctx context.Context, request v1.ListProbesRequestObje
 
 // (GET /probes/{probe_id})
 func (s Server) GetProbeById(ctx context.Context, request v1.GetProbeByIdRequestObject) (v1.GetProbeByIdResponseObject, error) {
+	defer metrics.RecordProbestoreRequest("get_probe", time.Now())
 	probe, err := s.Store.GetProbe(ctx, request.ProbeId)
 	if err != nil {
+		metrics.RecordProbestoreError("get_probe")
 		if k8serrors.IsNotFound(err) {
 			return v1.GetProbeById404JSONResponse{
 				Warning: v1.WarningObject{
@@ -80,16 +87,19 @@ func (s Server) GetProbeById(ctx context.Context, request v1.GetProbeByIdRequest
 
 // (POST /probes)
 func (s Server) CreateProbe(ctx context.Context, request v1.CreateProbeRequestObject) (v1.CreateProbeResponseObject, error) {
+	defer metrics.RecordProbestoreRequest("create_probe", time.Now())
 	urlHash := sha256.Sum256([]byte(request.Body.StaticUrl))
 	urlHashString := hex.EncodeToString(urlHash[:])[:63]
 
 	exists, err := s.Store.ProbeWithURLHashExists(ctx, urlHashString)
 	if err != nil {
+		metrics.RecordProbestoreError("create_probe")
 		log.Printf("Error checking for existing probes with URL hash %s: %v", urlHashString, err)
 		return nil, fmt.Errorf("failed to check for existing probes: %w", err)
 	}
 
 	if exists {
+		metrics.RecordProbestoreError("create_probe")
 		return v1.CreateProbe409JSONResponse{
 			Error: v1.ErrorObject{
 				Message: fmt.Sprintf("a probe for static_url %q already exists", request.Body.StaticUrl),
@@ -106,6 +116,7 @@ func (s Server) CreateProbe(ctx context.Context, request v1.CreateProbeRequestOb
 
 	createdProbe, err := s.Store.CreateProbe(ctx, probeToStore, urlHashString)
 	if err != nil {
+		metrics.RecordProbestoreError("create_probe")
 		log.Printf("Error creating probe %s: %v", probeToStore.Id, err)
 		return v1.CreateProbe500JSONResponse{
 			Error: v1.ErrorObject{
@@ -119,9 +130,11 @@ func (s Server) CreateProbe(ctx context.Context, request v1.CreateProbeRequestOb
 
 // (PATCH /probes/{probe_id})
 func (s Server) UpdateProbe(ctx context.Context, request v1.UpdateProbeRequestObject) (v1.UpdateProbeResponseObject, error) {
+	defer metrics.RecordProbestoreRequest("update_probe", time.Now())
 	// First, get the existing probe.
 	existingProbe, err := s.Store.GetProbe(ctx, request.ProbeId)
 	if err != nil {
+		metrics.RecordProbestoreError("update_probe")
 		if k8serrors.IsNotFound(err) {
 			return v1.UpdateProbe404JSONResponse{
 				Warning: v1.WarningObject{
@@ -141,6 +154,7 @@ func (s Server) UpdateProbe(ctx context.Context, request v1.UpdateProbeRequestOb
 	// Persist the updated probe.
 	updatedProbe, err := s.Store.UpdateProbe(ctx, *existingProbe)
 	if err != nil {
+		metrics.RecordProbestoreError("update_probe")
 		log.Printf("Error updating probe %s in storage: %v", request.ProbeId, err)
 		return nil, fmt.Errorf("failed to update probe in storage: %w", err)
 	}
@@ -150,8 +164,10 @@ func (s Server) UpdateProbe(ctx context.Context, request v1.UpdateProbeRequestOb
 
 // (DELETE /probes/{probe_id})
 func (s Server) DeleteProbe(ctx context.Context, request v1.DeleteProbeRequestObject) (v1.DeleteProbeResponseObject, error) {
+	defer metrics.RecordProbestoreRequest("delete_probe", time.Now())
 	err := s.Store.DeleteProbe(ctx, request.ProbeId)
 	if err != nil {
+		metrics.RecordProbestoreError("delete_probe")
 		if k8serrors.IsNotFound(err) {
 			return v1.DeleteProbe404JSONResponse{
 				Warning: v1.WarningObject{
@@ -164,4 +180,48 @@ func (s Server) DeleteProbe(ctx context.Context, request v1.DeleteProbeRequestOb
 	}
 
 	return v1.DeleteProbe204Response{}, nil
+}
+
+func (s Server) MonitorProbes(ctx context.Context) {
+	log.Printf("Starting probe monitoring")
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+	s.updateProbeMetrics(ctx)
+	for {
+		select {
+		case <-ticker.C:
+			s.updateProbeMetrics(ctx)
+		case <-ctx.Done():
+			log.Printf("Stopping probe monitoring")
+			return
+		}
+	}
+}
+
+func (s Server) updateProbeMetrics(ctx context.Context) {
+	probes, err := s.Store.ListProbes(ctx, "")
+	if err != nil {
+		log.Printf("error listing probes for metrics: %v", err)
+		return
+	}
+	// Group probes by state and private label
+	counts := make(map[string]map[string]int)
+	for _, probe := range probes {
+		state := string(probe.Status)
+		if _, ok := counts[state]; !ok {
+			counts[state] = make(map[string]int)
+		}
+		private := "false"
+		if probe.Labels != nil {
+			if val, ok := (*probe.Labels)["private"]; ok && val == "true" {
+				private = "true"
+			}
+		}
+		counts[state][private]++
+	}
+	for state, privateMap := range counts {
+		for private, count := range privateMap {
+			metrics.SetProbesTotal(state, private, count)
+		}
+	}
 }
