@@ -222,6 +222,7 @@ components:
         - active
         - failed
         - terminating
+        - deleted
       example: active
 
     ErrorObject:

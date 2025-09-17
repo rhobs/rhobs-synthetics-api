@@ -88,6 +88,20 @@ func (m *mockProbeStore) DeleteProbe(ctx context.Context, probeID uuid.UUID) err
 	if _, ok := m.probes[probeID]; !ok {
 		return k8serrors.NewNotFound(schema.GroupResource{}, probeID.String())
 	}
+	// Set status to terminating instead of deleting
+	probe := m.probes[probeID]
+	probe.Status = v1.Terminating
+	m.probes[probeID] = probe
+	return nil
+}
+
+func (m *mockProbeStore) DeleteProbeStorage(ctx context.Context, probeID uuid.UUID) error {
+	if m.deleteProbeErr != nil {
+		return m.deleteProbeErr
+	}
+	if _, ok := m.probes[probeID]; !ok {
+		return k8serrors.NewNotFound(schema.GroupResource{}, probeID.String())
+	}
 	delete(m.probes, probeID)
 	return nil
 }
@@ -407,6 +421,27 @@ func TestUpdateProbe(t *testing.T) {
 				updateProbeErr: errors.New("generic update error"),
 			},
 			expectedErr: "failed to update probe in storage: generic update error",
+		},
+		{
+			name:    "successfully deletes probe when status set to deleted",
+			probeID: probeID,
+			reqBody: v1.UpdateProbeJSONRequestBody{Status: &[]v1.StatusSchema{v1.Deleted}[0]},
+			store: &mockProbeStore{
+				probes: map[uuid.UUID]v1.ProbeObject{
+					probeID: {Id: probeID, StaticUrl: "https://example.com", Status: v1.Terminating},
+				},
+			},
+			expectedResponse: v1.UpdateProbe200JSONResponse{
+				Id:        probeID,
+				StaticUrl: "https://example.com",
+				Status:    v1.Deleted,
+			},
+			postCheck: func(t *testing.T, store probestore.ProbeStorage) {
+				// Verify the probe was actually deleted from the store
+				s := store.(*mockProbeStore)
+				_, exists := s.probes[probeID]
+				assert.False(t, exists, "Probe should have been actually deleted from store")
+			},
 		},
 	}
 

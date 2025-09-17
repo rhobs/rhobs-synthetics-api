@@ -203,6 +203,14 @@ func (k *KubernetesProbeStore) DeleteProbe(ctx context.Context, probeID uuid.UUI
 	return nil
 }
 
+func (k *KubernetesProbeStore) DeleteProbeStorage(ctx context.Context, probeID uuid.UUID) error {
+	configMapName := fmt.Sprintf(probeConfigMapNameFormat, probeID)
+
+	// TODO: Tune logging level for this
+	log.Printf("Deleting probe configmap: %s", probeID.String())
+	return k.Client.CoreV1().ConfigMaps(k.Namespace).Delete(ctx, configMapName, metav1.DeleteOptions{})
+}
+
 func (k *KubernetesProbeStore) ProbeWithURLHashExists(ctx context.Context, urlHashString string) (bool, error) {
 	hashLabelSelector := fmt.Sprintf("%s=%s", probeURLHashLabelKey, urlHashString)
 	existingProbes, err := k.Client.CoreV1().ConfigMaps(k.Namespace).List(ctx, metav1.ListOptions{
