@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	v1 "github.com/rhobs/rhobs-synthetics-api/pkg/apis/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -22,7 +23,7 @@ func TestLocalProbeStore_DeleteProbe(t *testing.T) {
 		checkErr   func(t *testing.T, err error)
 	}{
 		{
-			name:       "successfully deletes existing probe",
+			name:       "successfully sets probe status to terminating",
 			setupProbe: true,
 			probeID:    uuid.New(),
 			expectErr:  false,
@@ -75,9 +76,10 @@ func TestLocalProbeStore_DeleteProbe(t *testing.T) {
 				}
 			} else {
 				require.NoError(t, err)
-				// Verify the probe was actually deleted
-				_, err = store.GetProbe(ctx, tc.probeID)
-				assert.True(t, k8serrors.IsNotFound(err))
+				// Verify the probe status was set to terminating
+				probe, err := store.GetProbe(ctx, tc.probeID)
+				require.NoError(t, err, "Probe should still exist")
+				assert.Equal(t, v1.Terminating, probe.Status, "Probe status should be set to terminating")
 			}
 		})
 	}

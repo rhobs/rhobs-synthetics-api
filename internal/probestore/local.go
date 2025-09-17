@@ -252,8 +252,42 @@ func (l *LocalProbeStore) UpdateProbe(ctx context.Context, probe v1.ProbeObject)
 	return &probe, nil
 }
 
-// DeleteProbe deletes a probe's JSON file.
+// DeleteProbe sets a probe's status to terminating.
 func (l *LocalProbeStore) DeleteProbe(ctx context.Context, probeID uuid.UUID) error {
+	// Validate input
+	if probeID == (uuid.UUID{}) {
+		return fmt.Errorf("probe ID cannot be empty")
+	}
+
+	filePath := filepath.Join(l.Directory, probeID.String()+".json")
+
+	// Check if file exists
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return k8serrors.NewNotFound(schema.GroupResource{Group: "rhobs-synthetics", Resource: "probes"}, probeID.String())
+	}
+
+	// Get the existing probe
+	probe, err := l.GetProbe(ctx, probeID)
+	if err != nil {
+		return err
+	}
+
+	// Update the probe status to terminating
+	probe.Status = v1.Terminating
+
+	// Update the probe file
+	_, err = l.UpdateProbe(ctx, *probe)
+	if err != nil {
+		return fmt.Errorf("failed to update probe status to terminating: %w", err)
+	}
+
+	// TODO: Tune logging level for this
+	log.Printf("Set probe %s status to terminating", probeID.String())
+	return nil
+}
+
+// DeleteProbeStorage deletes a probe's JSON file from disk.
+func (l *LocalProbeStore) DeleteProbeStorage(ctx context.Context, probeID uuid.UUID) error {
 	// Validate input
 	if probeID == (uuid.UUID{}) {
 		return fmt.Errorf("probe ID cannot be empty")
@@ -273,7 +307,7 @@ func (l *LocalProbeStore) DeleteProbe(ctx context.Context, probeID uuid.UUID) er
 	}
 
 	// TODO: Tune logging level for this
-	log.Printf("Deleted probe %s", probeID.String())
+	log.Printf("Deleted probe file: %s", probeID.String())
 	return nil
 }
 

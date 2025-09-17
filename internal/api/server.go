@@ -136,9 +136,21 @@ func (s Server) UpdateProbe(ctx context.Context, request v1.UpdateProbeRequestOb
 	// Now, update the fields from the request.
 	if request.Body.Status != nil {
 		existingProbe.Status = *request.Body.Status
+
+		// If status is being set to "deleted", actually delete the probe
+		if *request.Body.Status == v1.Deleted {
+			err := s.Store.DeleteProbeStorage(ctx, request.ProbeId)
+			if err != nil {
+				log.Printf("Error deleting probe %s from storage: %v", request.ProbeId, err)
+				return nil, fmt.Errorf("failed to delete probe from storage: %w", err)
+			}
+
+			// Return the probe as it was before deletion
+			return v1.UpdateProbe200JSONResponse(*existingProbe), nil
+		}
 	}
 
-	// Persist the updated probe.
+	// Persist the updated probe (for non-deleted status changes).
 	updatedProbe, err := s.Store.UpdateProbe(ctx, *existingProbe)
 	if err != nil {
 		log.Printf("Error updating probe %s in storage: %v", request.ProbeId, err)
