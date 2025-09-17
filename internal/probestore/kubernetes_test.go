@@ -385,13 +385,21 @@ func TestKubernetesProbeStore_DeleteProbe(t *testing.T) {
 		checkErr  func(t *testing.T, err error)
 	}{
 		{
-			name:      "successfully deletes a probe",
+			name:      "successfully sets probe status to terminating",
 			clientset: fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, cm),
 			expectErr: false,
 			postCheck: func(t *testing.T, cs *fake.Clientset) {
-				_, err := cs.CoreV1().ConfigMaps(testNamespace).Get(ctx, fmt.Sprintf(probeConfigMapNameFormat, probeID), metav1.GetOptions{})
-				require.Error(t, err)
-				assert.True(t, k8serrors.IsNotFound(err), "expected a 'not found' error")
+				updatedCM, err := cs.CoreV1().ConfigMaps(testNamespace).Get(ctx, fmt.Sprintf(probeConfigMapNameFormat, probeID), metav1.GetOptions{})
+				require.NoError(t, err, "ConfigMap should still exist")
+
+				// Check that the probe status was updated to terminating
+				var updatedProbe v1.ProbeObject
+				err = json.Unmarshal([]byte(updatedCM.Data["probe-config.json"]), &updatedProbe)
+				require.NoError(t, err)
+				assert.Equal(t, v1.Terminating, updatedProbe.Status)
+
+				// Check that the status label was updated
+				assert.Equal(t, string(v1.Terminating), updatedCM.Labels[probeStatusLabelKey])
 			},
 		},
 		{
@@ -426,7 +434,7 @@ func TestKubernetesProbeStore_DeleteProbe(t *testing.T) {
 func TestKubernetesProbeStore_ProbeWithURLHashExists(t *testing.T) {
 	ctx := context.Background()
 	urlHash := "test-url-hash"
-	
+
 	probeID := uuid.New()
 	probe := v1.ProbeObject{
 		Id:        probeID,
@@ -434,27 +442,27 @@ func TestKubernetesProbeStore_ProbeWithURLHashExists(t *testing.T) {
 		Status:    v1.Active,
 		Labels:    &v1.LabelsSchema{"env": "test"},
 	}
-	
+
 	// ConfigMap with the URL hash we're looking for
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf(probeConfigMapNameFormat, probeID),
 			Namespace: testNamespace,
 			Labels: map[string]string{
-				baseAppLabelKey:        baseAppLabelValue,
-				probeURLHashLabelKey:   urlHash,
-				probeStatusLabelKey:    string(v1.Active),
+				baseAppLabelKey:      baseAppLabelValue,
+				probeURLHashLabelKey: urlHash,
+				probeStatusLabelKey:  string(v1.Active),
 			},
 		},
 		Data: map[string]string{"probe-config.json": mustMarshal(t, probe)},
 	}
 
 	testCases := []struct {
-		name        string
-		urlHash     string
-		clientset   *fake.Clientset
+		name         string
+		urlHash      string
+		clientset    *fake.Clientset
 		expectExists bool
-		expectErr   bool
+		expectErr    bool
 	}{
 		{
 			name:         "probe with URL hash exists",
