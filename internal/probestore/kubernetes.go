@@ -161,9 +161,46 @@ func (k *KubernetesProbeStore) UpdateProbe(ctx context.Context, probe v1.ProbeOb
 func (k *KubernetesProbeStore) DeleteProbe(ctx context.Context, probeID uuid.UUID) error {
 	configMapName := fmt.Sprintf(probeConfigMapNameFormat, probeID)
 
+	// Get the existing ConfigMap to update it
+	cm, err := k.Client.CoreV1().ConfigMaps(k.Namespace).Get(ctx, configMapName, metav1.GetOptions{})
+	if err != nil {
+		return err // Pass the error up, including not found errors
+	}
+
+	// Unmarshal the existing probe object
+	probe := &v1.ProbeObject{}
+	err = json.Unmarshal([]byte(cm.Data["probe-config.json"]), probe)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal probe from configmap: %w", err)
+	}
+
+	// Update the probe status to terminating
+	probe.Status = v1.Terminating
+
+	// Marshal the updated probe object
+	payloadBytes, err := json.Marshal(probe)
+	if err != nil {
+		return fmt.Errorf("failed to marshal updated payload: %w", err)
+	}
+
+	// Update the ConfigMap data
+	cm.Data["probe-config.json"] = string(payloadBytes)
+
+	// Update the status label
+	if cm.Labels == nil {
+		cm.Labels = make(map[string]string)
+	}
+	cm.Labels[probeStatusLabelKey] = string(v1.Terminating)
+
+	// Update the ConfigMap instead of deleting it
+	_, err = k.Client.CoreV1().ConfigMaps(k.Namespace).Update(ctx, cm, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update configmap %s to terminating status: %w", configMapName, err)
+	}
+
 	// TODO: Tune logging level for this
-	log.Printf("Deleted probe %s", probeID.String())
-	return k.Client.CoreV1().ConfigMaps(k.Namespace).Delete(ctx, configMapName, metav1.DeleteOptions{})
+	log.Printf("Set probe %s status to terminating", probeID.String())
+	return nil
 }
 
 func (k *KubernetesProbeStore) ProbeWithURLHashExists(ctx context.Context, urlHashString string) (bool, error) {
