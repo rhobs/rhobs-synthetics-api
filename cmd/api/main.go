@@ -12,7 +12,9 @@ import (
 
 	"github.com/getkin/kin-openapi/openapi3"
 	middleware "github.com/oapi-codegen/nethttp-middleware"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rhobs/rhobs-synthetics-api/internal/api"
+	"github.com/rhobs/rhobs-synthetics-api/internal/metrics"
 	"github.com/rhobs/rhobs-synthetics-api/internal/probestore"
 	v1 "github.com/rhobs/rhobs-synthetics-api/pkg/apis/v1"
 	"github.com/rhobs/rhobs-synthetics-api/pkg/kubeclient"
@@ -80,6 +82,7 @@ func createRouter(validatedAPI http.Handler, clientset *kubernetes.Clientset, sw
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(jsonSpec)
 	})
+	mux.Handle("/metrics", promhttp.Handler())
 
 	// Mount the validated API router to the main router.
 	// Requests will be matched against the UI handlers first, then fall through to the API.
@@ -140,11 +143,13 @@ func runWebServer(addr string) error {
 
 	server := api.NewServer(store)
 	serverHandler := v1.NewStrictHandler(server, nil)
+	metrics.RegisterMetrics()
 
 	// The API handlers are registered on a separate router and validated.
 	apiRouter := http.NewServeMux()
 	v1.HandlerFromMux(serverHandler, apiRouter)
 	validatedAPI := middleware.OapiRequestValidator(swagger)(apiRouter)
+	validatedAPI = metrics.Middleware(validatedAPI)
 
 	router := createRouter(validatedAPI, clientset, swagger)
 
@@ -154,6 +159,9 @@ func runWebServer(addr string) error {
 		ReadTimeout:  viper.GetDuration("read_timeout"),
 		WriteTimeout: viper.GetDuration("write_timeout"),
 	}
+	monitorCtx, cancelMonitor := context.WithCancel(context.Background())
+	defer cancelMonitor()
+	go server.MonitorProbes(monitorCtx)
 
 	// Start the server in a goroutine so it doesn't block the main thread
 	go func() {
@@ -172,6 +180,9 @@ func runWebServer(addr string) error {
 	// Block until a signal is received
 	sig := <-quit
 	log.Printf("Received signal: %v. Initiating graceful shutdown...", sig)
+
+	// Stop the probe monitor first
+	cancelMonitor()
 
 	// Create a deadline context for the shutdown process
 	shutdownTimeout := viper.GetDuration("graceful_timeout")
@@ -252,16 +263,16 @@ func main() {
 	startCmd.Flags().String("namespace", "rhobs", "The Kubernetes namespace to store probe configmaps in.")
 
 	// Bind flags to viper
-	viper.BindPFlag("port", startCmd.Flags().Lookup("port")) //nolint:errcheck
-	viper.BindPFlag("host", startCmd.Flags().Lookup("host")) //nolint:errcheck
-	viper.BindPFlag("read_timeout", startCmd.Flags().Lookup("read-timeout")) //nolint:errcheck
-	viper.BindPFlag("write_timeout", startCmd.Flags().Lookup("write-timeout")) //nolint:errcheck
+	viper.BindPFlag("port", startCmd.Flags().Lookup("port"))                         //nolint:errcheck
+	viper.BindPFlag("host", startCmd.Flags().Lookup("host"))                         //nolint:errcheck
+	viper.BindPFlag("read_timeout", startCmd.Flags().Lookup("read-timeout"))         //nolint:errcheck
+	viper.BindPFlag("write_timeout", startCmd.Flags().Lookup("write-timeout"))       //nolint:errcheck
 	viper.BindPFlag("graceful_timeout", startCmd.Flags().Lookup("graceful-timeout")) //nolint:errcheck
-	viper.BindPFlag("database_engine", startCmd.Flags().Lookup("database-engine")) //nolint:errcheck
-	viper.BindPFlag("config", startCmd.Flags().Lookup("config")) //nolint:errcheck
-	viper.BindPFlag("log_level", startCmd.Flags().Lookup("log-level")) //nolint:errcheck
-	viper.BindPFlag("kubeconfig", startCmd.Flags().Lookup("kubeconfig")) //nolint:errcheck
-	viper.BindPFlag("namespace", startCmd.Flags().Lookup("namespace")) //nolint:errcheck
+	viper.BindPFlag("database_engine", startCmd.Flags().Lookup("database-engine"))   //nolint:errcheck
+	viper.BindPFlag("config", startCmd.Flags().Lookup("config"))                     //nolint:errcheck
+	viper.BindPFlag("log_level", startCmd.Flags().Lookup("log-level"))               //nolint:errcheck
+	viper.BindPFlag("kubeconfig", startCmd.Flags().Lookup("kubeconfig"))             //nolint:errcheck
+	viper.BindPFlag("namespace", startCmd.Flags().Lookup("namespace"))               //nolint:errcheck             //nolint:errcheck
 
 	// Bind environment variables to viper
 	viper.BindEnv("namespace", "NAMESPACE") //nolint:errcheck
