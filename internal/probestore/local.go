@@ -252,38 +252,64 @@ func (l *LocalProbeStore) UpdateProbe(ctx context.Context, probe v1.ProbeObject)
 	return &probe, nil
 }
 
-// DeleteProbe sets a probe's status to terminating.
+
+// DeleteProbe handles deletion based on probe status.
 func (l *LocalProbeStore) DeleteProbe(ctx context.Context, probeID uuid.UUID) error {
 	// Validate input
 	if probeID == (uuid.UUID{}) {
 		return fmt.Errorf("probe ID cannot be empty")
 	}
 
-	filePath := filepath.Join(l.Directory, probeID.String()+".json")
-
-	// Check if file exists
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		return k8serrors.NewNotFound(schema.GroupResource{Group: "rhobs-synthetics", Resource: "probes"}, probeID.String())
-	}
-
-	// Get the existing probe
-	probe, err := l.GetProbe(ctx, probeID)
+	// Get the existing probe to check its status
+	existingProbe, err := l.GetProbe(ctx, probeID)
 	if err != nil {
-		return err
+		return err // Pass the error up, including not found errors
 	}
 
-	// Update the probe status to terminating
-	probe.Status = v1.Terminating
+	// Handle deletion based on current probe status
+	switch existingProbe.Status {
+	case v1.Pending:
+		// Probe was never picked up by an agent, delete immediately
+		err = l.DeleteProbeStorage(ctx, probeID)
+		if err != nil {
+			return fmt.Errorf("failed to delete pending probe %s: %w", probeID.String(), err)
+		}
+		log.Printf("Deleted pending probe %s immediately (never processed by agent)", probeID.String())
+		return nil
 
-	// Update the probe file
-	_, err = l.UpdateProbe(ctx, *probe)
-	if err != nil {
-		return fmt.Errorf("failed to update probe status to terminating: %w", err)
+	case v1.Active:
+		// Probe is active, set to terminating and wait for agent cleanup
+		existingProbe.Status = v1.Terminating
+		_, err := l.UpdateProbe(ctx, *existingProbe)
+		if err != nil {
+			return fmt.Errorf("failed to update probe %s to terminating status: %w", probeID.String(), err)
+		}
+		log.Printf("Set active probe %s status to terminating (waiting for agent cleanup)", probeID.String())
+		return nil
+
+	case v1.Terminating:
+		// Already terminating, no action needed
+		log.Printf("Probe %s is already in terminating state", probeID.String())
+		return nil
+
+	case v1.Failed:
+		// Failed probe, delete immediately as agent likely won't process it
+		err = l.DeleteProbeStorage(ctx, probeID)
+		if err != nil {
+			return fmt.Errorf("failed to delete failed probe %s: %w", probeID.String(), err)
+		}
+		log.Printf("Deleted failed probe %s immediately", probeID.String())
+		return nil
+
+	default:
+		// Unknown status, treat as pending and delete immediately
+		err = l.DeleteProbeStorage(ctx, probeID)
+		if err != nil {
+			return fmt.Errorf("failed to delete probe %s with unknown status %s: %w", probeID.String(), existingProbe.Status, err)
+		}
+		log.Printf("Deleted probe %s with unknown status %s immediately", probeID.String(), existingProbe.Status)
+		return nil
 	}
-
-	// TODO: Tune logging level for this
-	log.Printf("Set probe %s status to terminating", probeID.String())
-	return nil
 }
 
 // DeleteProbeStorage deletes a probe's JSON file from disk.

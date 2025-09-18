@@ -161,46 +161,81 @@ func (k *KubernetesProbeStore) UpdateProbe(ctx context.Context, probe v1.ProbeOb
 func (k *KubernetesProbeStore) DeleteProbe(ctx context.Context, probeID uuid.UUID) error {
 	configMapName := fmt.Sprintf(probeConfigMapNameFormat, probeID)
 
-	// Get the existing ConfigMap to update it
+	// Get the existing ConfigMap to check its current status
 	cm, err := k.Client.CoreV1().ConfigMaps(k.Namespace).Get(ctx, configMapName, metav1.GetOptions{})
 	if err != nil {
 		return err // Pass the error up, including not found errors
 	}
 
-	// Unmarshal the existing probe object
+	// Unmarshal the existing probe object to check its status
 	probe := &v1.ProbeObject{}
 	err = json.Unmarshal([]byte(cm.Data["probe-config.json"]), probe)
 	if err != nil {
-		return fmt.Errorf("failed to unmarshal probe from configmap: %w", err)
+		return fmt.Errorf("failed to unmarshal probe from configmap %s: %w", configMapName, err)
 	}
 
-	// Update the probe status to terminating
-	probe.Status = v1.Terminating
+	// Handle deletion based on current probe status
+	switch probe.Status {
+	case v1.Pending:
+		// Probe was never picked up by an agent, delete immediately
+		err = k.DeleteProbeStorage(ctx, probeID)
+		if err != nil {
+			return fmt.Errorf("failed to delete pending probe %s: %w", probeID.String(), err)
+		}
+		log.Printf("Deleted pending probe %s immediately (never processed by agent)", probeID.String())
+		return nil
 
-	// Marshal the updated probe object
-	payloadBytes, err := json.Marshal(probe)
-	if err != nil {
-		return fmt.Errorf("failed to marshal updated payload: %w", err)
+	case v1.Active:
+		// Probe is active, set to terminating and wait for agent cleanup
+		probe.Status = v1.Terminating
+
+		// Marshal the updated probe object
+		payloadBytes, err := json.Marshal(probe)
+		if err != nil {
+			return fmt.Errorf("failed to marshal updated payload: %w", err)
+		}
+
+		// Update the ConfigMap data
+		cm.Data["probe-config.json"] = string(payloadBytes)
+
+		// Update the status label
+		if cm.Labels == nil {
+			cm.Labels = make(map[string]string)
+		}
+		cm.Labels[probeStatusLabelKey] = string(v1.Terminating)
+
+		// Update the ConfigMap instead of deleting it
+		_, err = k.Client.CoreV1().ConfigMaps(k.Namespace).Update(ctx, cm, metav1.UpdateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to update configmap %s to terminating status: %w", configMapName, err)
+		}
+
+		log.Printf("Set active probe %s status to terminating (waiting for agent cleanup)", probeID.String())
+		return nil
+
+	case v1.Terminating:
+		// Already terminating, no action needed
+		log.Printf("Probe %s is already in terminating state", probeID.String())
+		return nil
+
+	case v1.Failed:
+		// Failed probe, delete immediately as agent likely won't process it
+		err = k.DeleteProbeStorage(ctx, probeID)
+		if err != nil {
+			return fmt.Errorf("failed to delete failed probe %s: %w", probeID.String(), err)
+		}
+		log.Printf("Deleted failed probe %s immediately", probeID.String())
+		return nil
+
+	default:
+		// Unknown status, treat as pending and delete immediately
+		err = k.DeleteProbeStorage(ctx, probeID)
+		if err != nil {
+			return fmt.Errorf("failed to delete probe %s with unknown status %s: %w", probeID.String(), probe.Status, err)
+		}
+		log.Printf("Deleted probe %s with unknown status %s immediately", probeID.String(), probe.Status)
+		return nil
 	}
-
-	// Update the ConfigMap data
-	cm.Data["probe-config.json"] = string(payloadBytes)
-
-	// Update the status label
-	if cm.Labels == nil {
-		cm.Labels = make(map[string]string)
-	}
-	cm.Labels[probeStatusLabelKey] = string(v1.Terminating)
-
-	// Update the ConfigMap instead of deleting it
-	_, err = k.Client.CoreV1().ConfigMaps(k.Namespace).Update(ctx, cm, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update configmap %s to terminating status: %w", configMapName, err)
-	}
-
-	// TODO: Tune logging level for this
-	log.Printf("Set probe %s status to terminating", probeID.String())
-	return nil
 }
 
 func (k *KubernetesProbeStore) DeleteProbeStorage(ctx context.Context, probeID uuid.UUID) error {

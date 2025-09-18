@@ -364,33 +364,71 @@ func TestKubernetesProbeStore_UpdateProbe(t *testing.T) {
 	}
 }
 
+
 func TestKubernetesProbeStore_DeleteProbe(t *testing.T) {
 	ctx := context.Background()
-	probeID := uuid.New()
-	probe := v1.ProbeObject{Id: probeID, StaticUrl: "http://example.com/1", Status: v1.Active, Labels: &v1.LabelsSchema{"env": "prod"}}
-	cm := &corev1.ConfigMap{
+	
+	// Test data for different probe states
+	probeIDActive := uuid.New()
+	probeActive := v1.ProbeObject{Id: probeIDActive, StaticUrl: "http://example.com/active", Status: v1.Active, Labels: &v1.LabelsSchema{"env": "prod"}}
+	cmActive := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf(probeConfigMapNameFormat, probeID),
+			Name:      fmt.Sprintf(probeConfigMapNameFormat, probeIDActive),
 			Namespace: testNamespace,
 			Labels:    map[string]string{baseAppLabelKey: baseAppLabelValue, "env": "prod"},
 		},
-		Data: map[string]string{"probe-config.json": mustMarshal(t, probe)},
+		Data: map[string]string{"probe-config.json": mustMarshal(t, probeActive)},
+	}
+
+	probeIDPending := uuid.New()
+	probePending := v1.ProbeObject{Id: probeIDPending, StaticUrl: "http://example.com/pending", Status: v1.Pending, Labels: &v1.LabelsSchema{"env": "test"}}
+	cmPending := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf(probeConfigMapNameFormat, probeIDPending),
+			Namespace: testNamespace,
+			Labels:    map[string]string{baseAppLabelKey: baseAppLabelValue, "env": "test"},
+		},
+		Data: map[string]string{"probe-config.json": mustMarshal(t, probePending)},
+	}
+
+	probeIDFailed := uuid.New()
+	probeFailed := v1.ProbeObject{Id: probeIDFailed, StaticUrl: "http://example.com/failed", Status: v1.Failed, Labels: &v1.LabelsSchema{"env": "test"}}
+	cmFailed := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf(probeConfigMapNameFormat, probeIDFailed),
+			Namespace: testNamespace,
+			Labels:    map[string]string{baseAppLabelKey: baseAppLabelValue, "env": "test"},
+		},
+		Data: map[string]string{"probe-config.json": mustMarshal(t, probeFailed)},
+	}
+
+	probeIDTerminating := uuid.New()
+	probeTerminating := v1.ProbeObject{Id: probeIDTerminating, StaticUrl: "http://example.com/terminating", Status: v1.Terminating, Labels: &v1.LabelsSchema{"env": "test"}}
+	cmTerminating := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf(probeConfigMapNameFormat, probeIDTerminating),
+			Namespace: testNamespace,
+			Labels:    map[string]string{baseAppLabelKey: baseAppLabelValue, probeStatusLabelKey: string(v1.Terminating), "env": "test"},
+		},
+		Data: map[string]string{"probe-config.json": mustMarshal(t, probeTerminating)},
 	}
 
 	testCases := []struct {
 		name      string
+		probeID   uuid.UUID
 		clientset *fake.Clientset
 		expectErr bool
-		postCheck func(t *testing.T, cs *fake.Clientset)
+		postCheck func(t *testing.T, cs *fake.Clientset, probeID uuid.UUID)
 		checkErr  func(t *testing.T, err error)
 	}{
 		{
-			name:      "successfully sets probe status to terminating",
-			clientset: fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, cm),
+			name:      "successfully sets active probe status to terminating",
+			probeID:   probeIDActive,
+			clientset: fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, cmActive),
 			expectErr: false,
-			postCheck: func(t *testing.T, cs *fake.Clientset) {
+			postCheck: func(t *testing.T, cs *fake.Clientset, probeID uuid.UUID) {
 				updatedCM, err := cs.CoreV1().ConfigMaps(testNamespace).Get(ctx, fmt.Sprintf(probeConfigMapNameFormat, probeID), metav1.GetOptions{})
-				require.NoError(t, err, "ConfigMap should still exist")
+				require.NoError(t, err, "ConfigMap should still exist for active probe")
 
 				// Check that the probe status was updated to terminating
 				var updatedProbe v1.ProbeObject
@@ -403,7 +441,48 @@ func TestKubernetesProbeStore_DeleteProbe(t *testing.T) {
 			},
 		},
 		{
+			name:      "successfully deletes pending probe immediately",
+			probeID:   probeIDPending,
+			clientset: fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, cmPending),
+			expectErr: false,
+			postCheck: func(t *testing.T, cs *fake.Clientset, probeID uuid.UUID) {
+				// Probe should be completely deleted (ConfigMap gone)
+				_, err := cs.CoreV1().ConfigMaps(testNamespace).Get(ctx, fmt.Sprintf(probeConfigMapNameFormat, probeID), metav1.GetOptions{})
+				require.Error(t, err)
+				assert.True(t, k8serrors.IsNotFound(err), "expected a 'not found' error for pending probe")
+			},
+		},
+		{
+			name:      "successfully deletes failed probe immediately",
+			probeID:   probeIDFailed,
+			clientset: fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, cmFailed),
+			expectErr: false,
+			postCheck: func(t *testing.T, cs *fake.Clientset, probeID uuid.UUID) {
+				// Probe should be completely deleted (ConfigMap gone)
+				_, err := cs.CoreV1().ConfigMaps(testNamespace).Get(ctx, fmt.Sprintf(probeConfigMapNameFormat, probeID), metav1.GetOptions{})
+				require.Error(t, err)
+				assert.True(t, k8serrors.IsNotFound(err), "expected a 'not found' error for failed probe")
+			},
+		},
+		{
+			name:      "handles already terminating probe gracefully",
+			probeID:   probeIDTerminating,
+			clientset: fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, cmTerminating),
+			expectErr: false,
+			postCheck: func(t *testing.T, cs *fake.Clientset, probeID uuid.UUID) {
+				// Probe should still exist and remain in terminating state
+				updatedCM, err := cs.CoreV1().ConfigMaps(testNamespace).Get(ctx, fmt.Sprintf(probeConfigMapNameFormat, probeID), metav1.GetOptions{})
+				require.NoError(t, err, "ConfigMap should still exist for terminating probe")
+
+				var updatedProbe v1.ProbeObject
+				err = json.Unmarshal([]byte(updatedCM.Data["probe-config.json"]), &updatedProbe)
+				require.NoError(t, err)
+				assert.Equal(t, v1.Terminating, updatedProbe.Status)
+			},
+		},
+		{
 			name:      "error deleting non-existent probe",
+			probeID:   uuid.New(),
 			clientset: fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}),
 			expectErr: true,
 			checkErr: func(t *testing.T, err error) {
@@ -417,7 +496,7 @@ func TestKubernetesProbeStore_DeleteProbe(t *testing.T) {
 			store, err := NewKubernetesProbeStore(ctx, tc.clientset, testNamespace)
 			require.NoError(t, err)
 
-			err = store.DeleteProbe(ctx, probeID)
+			err = store.DeleteProbe(ctx, tc.probeID)
 
 			if tc.expectErr {
 				require.Error(t, err)
@@ -426,6 +505,9 @@ func TestKubernetesProbeStore_DeleteProbe(t *testing.T) {
 				}
 			} else {
 				require.NoError(t, err)
+				if tc.postCheck != nil {
+					tc.postCheck(t, tc.clientset, tc.probeID)
+				}
 			}
 		})
 	}
