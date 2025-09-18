@@ -11,7 +11,21 @@ import (
 	v1 "github.com/rhobs/rhobs-synthetics-api/pkg/apis/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 )
+
+// Helper function to create a test probe
+func createTestProbe(id uuid.UUID) v1.ProbeObject {
+	if id == (uuid.UUID{}) {
+		id = uuid.New()
+	}
+	return v1.ProbeObject{
+		Id:        id,
+		StaticUrl: "http://example.com/test",
+		Status:    v1.Pending,
+		Labels:    &v1.LabelsSchema{"env": "test"},
+	}
+}
 
 func TestNewLocalProbeStore(t *testing.T) {
 	// Clean up any existing default directory
@@ -493,4 +507,195 @@ func TestLocalProbeStore_AdditionalErrorHandling(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, exists)
 	})
+}
+
+func TestLocalProbeStore_GetProbe(t *testing.T) {
+	ctx := context.Background()
+
+	testCases := []struct {
+		name        string
+		setupProbe  bool
+		probeID     uuid.UUID
+		expectErr   bool
+		checkErr    func(t *testing.T, err error)
+		expectedURL string
+	}{
+		{
+			name:        "successfully gets existing probe",
+			setupProbe:  true,
+			probeID:     uuid.New(),
+			expectErr:   false,
+			expectedURL: "http://example.com/test",
+		},
+		{
+			name:       "error getting non-existent probe",
+			setupProbe: false,
+			probeID:    uuid.New(),
+			expectErr:  true,
+			checkErr: func(t *testing.T, err error) {
+				assert.True(t, k8serrors.IsNotFound(err), "expected a 'not found' error")
+			},
+		},
+		{
+			name:       "error with empty probe ID",
+			setupProbe: false,
+			probeID:    uuid.UUID{},
+			expectErr:  true,
+			checkErr: func(t *testing.T, err error) {
+				assert.True(t, k8serrors.IsNotFound(err), "expected a 'not found' error")
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Arrange
+			tempDir, err := os.MkdirTemp("", "probe-store-test-*")
+			require.NoError(t, err)
+			defer func() { _ = os.RemoveAll(tempDir) }()
+
+			store, err := NewLocalProbeStoreWithDir(tempDir)
+			require.NoError(t, err)
+
+			if tc.setupProbe {
+				// Create a probe first
+				probe := createTestProbe(tc.probeID)
+				_, err = store.CreateProbe(ctx, probe, "test-hash")
+				require.NoError(t, err)
+			}
+
+			// Act
+			result, err := store.GetProbe(ctx, tc.probeID)
+
+			// Assert
+			if tc.expectErr {
+				require.Error(t, err)
+				assert.Nil(t, result)
+				if tc.checkErr != nil {
+					tc.checkErr(t, err)
+				}
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, result)
+				assert.Equal(t, tc.probeID, result.Id)
+				assert.Equal(t, tc.expectedURL, result.StaticUrl)
+				assert.Equal(t, v1.Pending, result.Status)
+			}
+		})
+	}
+}
+
+func TestLocalProbeStore_DeleteProbe(t *testing.T) {
+	ctx := context.Background()
+
+	testCases := []struct {
+		name         string
+		probeStatus  v1.StatusSchema
+		probeID      uuid.UUID
+		expectErr    bool
+		checkDeleted bool // true if probe should be completely deleted
+		checkErr     func(t *testing.T, err error)
+	}{
+		{
+			name:         "successfully deletes pending probe immediately",
+			probeStatus:  v1.Pending,
+			probeID:      uuid.New(),
+			expectErr:    false,
+			checkDeleted: true,
+		},
+		{
+			name:         "successfully sets active probe to terminating",
+			probeStatus:  v1.Active,
+			probeID:      uuid.New(),
+			expectErr:    false,
+			checkDeleted: false,
+		},
+		{
+			name:         "successfully deletes failed probe immediately",
+			probeStatus:  v1.Failed,
+			probeID:      uuid.New(),
+			expectErr:    false,
+			checkDeleted: true,
+		},
+		{
+			name:         "handles already terminating probe gracefully",
+			probeStatus:  v1.Terminating,
+			probeID:      uuid.New(),
+			expectErr:    false,
+			checkDeleted: false,
+		},
+		{
+			name:        "error deleting non-existent probe",
+			probeStatus: "", // not used
+			probeID:     uuid.New(),
+			expectErr:   true,
+			checkErr: func(t *testing.T, err error) {
+				assert.True(t, k8serrors.IsNotFound(err), "expected a 'not found' error")
+			},
+		},
+		{
+			name:        "error with empty probe ID",
+			probeStatus: "", // not used
+			probeID:     uuid.UUID{},
+			expectErr:   true,
+			checkErr: func(t *testing.T, err error) {
+				assert.Contains(t, err.Error(), "probe ID cannot be empty")
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Arrange
+			tempDir, err := os.MkdirTemp("", "probe-store-test-*")
+			require.NoError(t, err)
+			defer func() { _ = os.RemoveAll(tempDir) }()
+
+			store, err := NewLocalProbeStoreWithDir(tempDir)
+			require.NoError(t, err)
+
+			// Create probe if needed (skip for error cases)
+			if tc.probeStatus != "" {
+				probe := v1.ProbeObject{
+					Id:        tc.probeID,
+					StaticUrl: "http://example.com/test",
+					Status:    tc.probeStatus,
+					Labels:    &v1.LabelsSchema{"env": "test"},
+				}
+				_, err = store.CreateProbe(ctx, probe, "test-hash")
+				require.NoError(t, err)
+			}
+
+			// Act
+			err = store.DeleteProbe(ctx, tc.probeID)
+
+			// Assert
+			if tc.expectErr {
+				require.Error(t, err)
+				if tc.checkErr != nil {
+					tc.checkErr(t, err)
+				}
+			} else {
+				require.NoError(t, err)
+
+				if tc.checkDeleted {
+					// Verify the probe was completely deleted
+					_, err = store.GetProbe(ctx, tc.probeID)
+					require.Error(t, err, "Probe should be deleted")
+					assert.True(t, k8serrors.IsNotFound(err), "expected a 'not found' error for deleted probe")
+				} else {
+					// Verify the probe still exists but status was updated appropriately
+					probe, err := store.GetProbe(ctx, tc.probeID)
+					require.NoError(t, err, "Probe should still exist")
+
+					switch tc.probeStatus {
+					case v1.Active:
+						assert.Equal(t, v1.Terminating, probe.Status, "Active probe should be set to terminating")
+					case v1.Terminating:
+						assert.Equal(t, v1.Terminating, probe.Status, "Terminating probe should remain terminating")
+					}
+				}
+			}
+		})
+	}
 }
