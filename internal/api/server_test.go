@@ -377,26 +377,20 @@ func TestUpdateProbe(t *testing.T) {
 		postCheck        func(t *testing.T, store probestore.ProbeStorage)
 	}{
 		{
-			name:    "successfully updates a probe",
+			name:    "returns 403 when trying to update status field to non-deleted value",
 			probeID: probeID,
 			reqBody: v1.UpdateProbeJSONRequestBody{Status: &newStatus},
 			store: &mockProbeStore{
 				probes: map[uuid.UUID]v1.ProbeObject{probeID: initialProbe},
 			},
-			expectedResponse: v1.UpdateProbe200JSONResponse{
-				Id:        probeID,
-				StaticUrl: "https://example.com",
-				Status:    v1.Active,
-			},
-			postCheck: func(t *testing.T, store probestore.ProbeStorage) {
-				s := store.(*mockProbeStore)
-				assert.Equal(t, newStatus, s.probes[probeID].Status)
+			expectedResponse: v1.UpdateProbe403JSONResponse{
+				Error: v1.ErrorObject{Message: "modification of status field is forbidden - it's managed by the system (only deletion via 'deleted' status is allowed)"},
 			},
 		},
 		{
-			name:    "returns 404 when probe does not exist",
+			name:    "returns 404 when probe does not exist (testing with labels)",
 			probeID: uuid.New(),
-			reqBody: v1.UpdateProbeJSONRequestBody{Status: &newStatus},
+			reqBody: v1.UpdateProbeJSONRequestBody{Labels: &v1.LabelsSchema{"environment": "test"}},
 			store:   &mockProbeStore{probes: map[uuid.UUID]v1.ProbeObject{}},
 			expectedResponse: v1.UpdateProbe404JSONResponse{
 				Warning: v1.WarningObject{Message: fmt.Sprintf("probe with ID %s not found", uuid.New().String())}, // Message is dynamic, we'll check the type
@@ -405,7 +399,7 @@ func TestUpdateProbe(t *testing.T) {
 		{
 			name:    "returns error when getting probe fails",
 			probeID: probeID,
-			reqBody: v1.UpdateProbeJSONRequestBody{Status: &newStatus},
+			reqBody: v1.UpdateProbeJSONRequestBody{Labels: &v1.LabelsSchema{"environment": "test"}},
 			store: &mockProbeStore{
 				probes:      map[uuid.UUID]v1.ProbeObject{probeID: initialProbe},
 				getProbeErr: errors.New("generic get error"),
@@ -415,7 +409,7 @@ func TestUpdateProbe(t *testing.T) {
 		{
 			name:    "returns error when updating probe fails",
 			probeID: probeID,
-			reqBody: v1.UpdateProbeJSONRequestBody{Status: &newStatus},
+			reqBody: v1.UpdateProbeJSONRequestBody{Labels: &v1.LabelsSchema{"environment": "test"}},
 			store: &mockProbeStore{
 				probes:         map[uuid.UUID]v1.ProbeObject{probeID: initialProbe},
 				updateProbeErr: errors.New("generic update error"),
@@ -441,6 +435,74 @@ func TestUpdateProbe(t *testing.T) {
 				s := store.(*mockProbeStore)
 				_, exists := s.probes[probeID]
 				assert.False(t, exists, "Probe should have been actually deleted from store")
+			},
+		},
+		{
+			name:    "successfully updates user labels",
+			probeID: probeID,
+			reqBody: v1.UpdateProbeJSONRequestBody{Labels: &v1.LabelsSchema{"environment": "prod", "team": "sre"}},
+			store: &mockProbeStore{
+				probes: map[uuid.UUID]v1.ProbeObject{probeID: initialProbe},
+			},
+			expectedResponse: v1.UpdateProbe200JSONResponse{
+				Id:        probeID,
+				StaticUrl: "https://example.com",
+				Status:    v1.Pending,
+				Labels:    &v1.LabelsSchema{"environment": "prod", "team": "sre"},
+			},
+			postCheck: func(t *testing.T, store probestore.ProbeStorage) {
+				s := store.(*mockProbeStore)
+				labels := s.probes[probeID].Labels
+				assert.NotNil(t, labels)
+				assert.Equal(t, "prod", (*labels)["environment"])
+				assert.Equal(t, "sre", (*labels)["team"])
+			},
+		},
+		{
+			name:    "returns 403 when trying to modify protected label: app",
+			probeID: probeID,
+			reqBody: v1.UpdateProbeJSONRequestBody{Labels: &v1.LabelsSchema{"app": "malicious-app"}},
+			store: &mockProbeStore{
+				probes: map[uuid.UUID]v1.ProbeObject{probeID: initialProbe},
+			},
+			expectedResponse: v1.UpdateProbe403JSONResponse{
+				Error: v1.ErrorObject{Message: "modification of system-managed label 'app' is forbidden"},
+			},
+		},
+		{
+			name:    "returns 403 when trying to modify protected label: rhobs-synthetics/status",
+			probeID: probeID,
+			reqBody: v1.UpdateProbeJSONRequestBody{Labels: &v1.LabelsSchema{"rhobs-synthetics/status": "hacked"}},
+			store: &mockProbeStore{
+				probes: map[uuid.UUID]v1.ProbeObject{probeID: initialProbe},
+			},
+			expectedResponse: v1.UpdateProbe403JSONResponse{
+				Error: v1.ErrorObject{Message: "modification of system-managed label 'rhobs-synthetics/status' is forbidden"},
+			},
+		},
+		{
+			name:    "returns 403 when trying to modify protected label: rhobs-synthetics/static-url-hash",
+			probeID: probeID,
+			reqBody: v1.UpdateProbeJSONRequestBody{Labels: &v1.LabelsSchema{"rhobs-synthetics/static-url-hash": "fakehash"}},
+			store: &mockProbeStore{
+				probes: map[uuid.UUID]v1.ProbeObject{probeID: initialProbe},
+			},
+			expectedResponse: v1.UpdateProbe403JSONResponse{
+				Error: v1.ErrorObject{Message: "modification of system-managed label 'rhobs-synthetics/static-url-hash' is forbidden"},
+			},
+		},
+		{
+			name:    "returns 403 when trying to update status to non-deleted value with labels",
+			probeID: probeID,
+			reqBody: v1.UpdateProbeJSONRequestBody{
+				Status: &newStatus,
+				Labels: &v1.LabelsSchema{"environment": "prod"},
+			},
+			store: &mockProbeStore{
+				probes: map[uuid.UUID]v1.ProbeObject{probeID: initialProbe},
+			},
+			expectedResponse: v1.UpdateProbe403JSONResponse{
+				Error: v1.ErrorObject{Message: "modification of status field is forbidden - it's managed by the system (only deletion via 'deleted' status is allowed)"},
 			},
 		},
 	}
