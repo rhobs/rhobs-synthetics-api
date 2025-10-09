@@ -377,14 +377,16 @@ func TestUpdateProbe(t *testing.T) {
 		postCheck        func(t *testing.T, store probestore.ProbeStorage)
 	}{
 		{
-			name:    "returns 403 when trying to update status field to non-deleted value",
+			name:    "allows status field updates (RMO can set terminating, agents can set active/failed)",
 			probeID: probeID,
 			reqBody: v1.UpdateProbeJSONRequestBody{Status: &newStatus},
 			store: &mockProbeStore{
 				probes: map[uuid.UUID]v1.ProbeObject{probeID: initialProbe},
 			},
-			expectedResponse: v1.UpdateProbe403JSONResponse{
-				Error: v1.ErrorObject{Message: "modification of status field is forbidden - it's managed by the system (only deletion via 'deleted' status is allowed)"},
+			expectedResponse: v1.UpdateProbe200JSONResponse{
+				Id:        probeID,
+				StaticUrl: "https://example.com",
+				Status:    newStatus,
 			},
 		},
 		{
@@ -492,7 +494,7 @@ func TestUpdateProbe(t *testing.T) {
 			},
 		},
 		{
-			name:    "returns 403 when trying to update status to non-deleted value with labels",
+			name:    "allows status updates with labels (RMO can set terminating, agents can set active/failed)",
 			probeID: probeID,
 			reqBody: v1.UpdateProbeJSONRequestBody{
 				Status: &newStatus,
@@ -501,8 +503,11 @@ func TestUpdateProbe(t *testing.T) {
 			store: &mockProbeStore{
 				probes: map[uuid.UUID]v1.ProbeObject{probeID: initialProbe},
 			},
-			expectedResponse: v1.UpdateProbe403JSONResponse{
-				Error: v1.ErrorObject{Message: "modification of status field is forbidden - it's managed by the system (only deletion via 'deleted' status is allowed)"},
+			expectedResponse: v1.UpdateProbe200JSONResponse{
+				Id:        probeID,
+				StaticUrl: "https://example.com",
+				Status:    newStatus,
+				Labels:    &v1.LabelsSchema{"environment": "prod"},
 			},
 		},
 	}

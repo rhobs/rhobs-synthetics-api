@@ -42,32 +42,14 @@ func validateProtectedLabels(labels *v1.LabelsSchema) error {
 	}
 
 	protectedLabels := []string{
-		baseAppLabelKey,      // "app"
-		probeStatusLabelKey,  // "rhobs-synthetics/status"
+		baseAppLabelKey, // "app"
+		// probeStatusLabelKey,  // "rhobs-synthetics/status" - removed protection
 		probeURLHashLabelKey, // "rhobs-synthetics/static-url-hash"
 	}
 
 	for _, protectedLabel := range protectedLabels {
 		if _, exists := (*labels)[protectedLabel]; exists {
 			return fmt.Errorf("modification of system-managed label '%s' is forbidden", protectedLabel)
-		}
-	}
-
-	return nil
-}
-
-// validateProtectedFields checks if the user is trying to modify protected fields/labels
-func validateProtectedFields(request *v1.UpdateProbeJSONRequestBody) error {
-	// Check if user is trying to modify protected labels
-	if err := validateProtectedLabels(request.Labels); err != nil {
-		return err
-	}
-
-	// Check if user is trying to modify status (except for deletion)
-	if request.Status != nil {
-		// Only allow status change to "deleted" for deletion functionality
-		if *request.Status != v1.Deleted {
-			return fmt.Errorf("modification of status field is forbidden - it's managed by the system (only deletion via 'deleted' status is allowed)")
 		}
 	}
 
@@ -173,8 +155,9 @@ func (s Server) CreateProbe(ctx context.Context, request v1.CreateProbeRequestOb
 func (s Server) UpdateProbe(ctx context.Context, request v1.UpdateProbeRequestObject) (v1.UpdateProbeResponseObject, error) {
 	defer metrics.RecordProbestoreRequest("update_probe", time.Now())
 
-	// Validate that protected fields/labels are not being modified - return 403 if they are
-	if err := validateProtectedFields(request.Body); err != nil {
+	// Validate that protected labels are not being modified - return 403 if they are
+	// Note: Status field modifications are allowed (RMO can set terminating, agents can set active/failed)
+	if err := validateProtectedLabels(request.Body.Labels); err != nil {
 		return v1.UpdateProbe403JSONResponse{
 			Error: v1.ErrorObject{
 				Message: err.Error(),
@@ -197,7 +180,7 @@ func (s Server) UpdateProbe(ctx context.Context, request v1.UpdateProbeRequestOb
 		return nil, fmt.Errorf("failed to get probe from storage for update: %w", err)
 	}
 
-	// Handle status updates (only "deleted" is allowed, validated above)
+	// Now, update the fields from the request.
 	if request.Body.Status != nil {
 		existingProbe.Status = *request.Body.Status
 
