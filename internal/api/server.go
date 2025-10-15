@@ -42,9 +42,9 @@ func validateProtectedLabels(labels *v1.LabelsSchema) error {
 	}
 
 	protectedLabels := []string{
-		baseAppLabelKey,      // "app"
-		probeStatusLabelKey,  // "rhobs-synthetics/status"
-		probeURLHashLabelKey, // "rhobs-synthetics/static-url-hash"
+		baseAppLabelKey,
+		probeStatusLabelKey,
+		probeURLHashLabelKey,
 	}
 
 	for _, protectedLabel := range protectedLabels {
