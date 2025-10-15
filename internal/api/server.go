@@ -42,8 +42,8 @@ func validateProtectedLabels(labels *v1.LabelsSchema) error {
 	}
 
 	protectedLabels := []string{
-		baseAppLabelKey, // "app"
-		// probeStatusLabelKey,  // "rhobs-synthetics/status" - removed protection
+		baseAppLabelKey,      // "app"
+		probeStatusLabelKey,  // "rhobs-synthetics/status"
 		probeURLHashLabelKey, // "rhobs-synthetics/static-url-hash"
 	}
 
