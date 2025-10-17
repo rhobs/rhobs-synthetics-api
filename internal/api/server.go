@@ -17,8 +17,10 @@ import (
 )
 
 const (
-	baseAppLabelKey   = "app"
-	baseAppLabelValue = "rhobs-synthetics-probe"
+	baseAppLabelKey      = "app"
+	baseAppLabelValue    = "rhobs-synthetics-probe"
+	probeStatusLabelKey  = "rhobs-synthetics/status"
+	probeURLHashLabelKey = "rhobs-synthetics/static-url-hash"
 )
 
 // Server is the main API server object.
@@ -31,6 +33,27 @@ func NewServer(store probestore.ProbeStorage) Server {
 	return Server{
 		Store: store,
 	}
+}
+
+// validateProtectedLabels checks if the user is trying to modify protected system labels
+func validateProtectedLabels(labels *v1.LabelsSchema) error {
+	if labels == nil {
+		return nil
+	}
+
+	protectedLabels := []string{
+		baseAppLabelKey,
+		probeStatusLabelKey,
+		probeURLHashLabelKey,
+	}
+
+	for _, protectedLabel := range protectedLabels {
+		if _, exists := (*labels)[protectedLabel]; exists {
+			return fmt.Errorf("modification of system-managed label '%s' is forbidden", protectedLabel)
+		}
+	}
+
+	return nil
 }
 
 // (GET /probes)
@@ -131,6 +154,17 @@ func (s Server) CreateProbe(ctx context.Context, request v1.CreateProbeRequestOb
 // (PATCH /probes/{probe_id})
 func (s Server) UpdateProbe(ctx context.Context, request v1.UpdateProbeRequestObject) (v1.UpdateProbeResponseObject, error) {
 	defer metrics.RecordProbestoreRequest("update_probe", time.Now())
+
+	// Validate that protected labels are not being modified - return 403 if they are
+	// Note: Status field modifications are allowed (RMO can set terminating, agents can set active/failed)
+	if err := validateProtectedLabels(request.Body.Labels); err != nil {
+		return v1.UpdateProbe403JSONResponse{
+			Error: v1.ErrorObject{
+				Message: err.Error(),
+			},
+		}, nil
+	}
+
 	// First, get the existing probe.
 	existingProbe, err := s.Store.GetProbe(ctx, request.ProbeId)
 	if err != nil {
@@ -160,6 +194,19 @@ func (s Server) UpdateProbe(ctx context.Context, request v1.UpdateProbeRequestOb
 
 			// Return the probe as it was before deletion
 			return v1.UpdateProbe200JSONResponse(*existingProbe), nil
+		}
+	}
+
+	// Update user-provided labels (merge with existing labels)
+	if request.Body.Labels != nil {
+		// Initialize labels if they don't exist
+		if existingProbe.Labels == nil {
+			existingProbe.Labels = &v1.LabelsSchema{}
+		}
+
+		// Merge the new labels with existing ones
+		for key, value := range *request.Body.Labels {
+			(*existingProbe.Labels)[key] = value
 		}
 	}
 

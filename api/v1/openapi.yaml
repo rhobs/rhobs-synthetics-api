@@ -106,6 +106,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/WarningResponse"
+        "403":
+          description: Forbidden - attempt to modify protected system labels.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "400":
           description: Invalid request parameters.
           content:
@@ -213,6 +219,8 @@ components:
       properties:
         status:
           $ref: '#/components/schemas/StatusSchema'
+        labels:
+          $ref: '#/components/schemas/LabelsSchema'
 
     StatusSchema:
       type: string
