@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"maps"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,6 +22,7 @@ const (
 	baseAppLabelValue    = "rhobs-synthetics-probe"
 	probeStatusLabelKey  = "rhobs-synthetics/status"
 	probeURLHashLabelKey = "rhobs-synthetics/static-url-hash"
+	privateProbeLabelKey = "private"
 )
 
 // Server is the main API server object.
@@ -36,8 +38,8 @@ func NewServer(store probestore.ProbeStorage) Server {
 }
 
 // validateProtectedLabels checks if the user is trying to modify protected system labels
-func validateProtectedLabels(labels *v1.LabelsSchema) error {
-	if labels == nil {
+func validateProtectedLabels(new, old v1.LabelsSchema) error {
+	if new == nil {
 		return nil
 	}
 
@@ -45,11 +47,23 @@ func validateProtectedLabels(labels *v1.LabelsSchema) error {
 		baseAppLabelKey,
 		probeStatusLabelKey,
 		probeURLHashLabelKey,
+		privateProbeLabelKey,
 	}
 
 	for _, protectedLabel := range protectedLabels {
-		if _, exists := (*labels)[protectedLabel]; exists {
-			return fmt.Errorf("modification of system-managed label '%s' is forbidden", protectedLabel)
+		newValue, newExists := new[protectedLabel]
+		oldValue, oldExists := old[protectedLabel]
+
+		if newExists {
+			// Disallow users from setting previously unset system-managed labels
+			if !oldExists {
+				return fmt.Errorf("creation of system-managed label '%s' is forbidden", protectedLabel)
+			}
+
+			// Disallow users from changing the value of existing system-managed labels
+			if newValue != oldValue {
+				return fmt.Errorf("modification of system-managed label '%s' is forbidden", protectedLabel)
+			}
 		}
 	}
 
@@ -155,16 +169,6 @@ func (s Server) CreateProbe(ctx context.Context, request v1.CreateProbeRequestOb
 func (s Server) UpdateProbe(ctx context.Context, request v1.UpdateProbeRequestObject) (v1.UpdateProbeResponseObject, error) {
 	defer metrics.RecordProbestoreRequest("update_probe", time.Now())
 
-	// Validate that protected labels are not being modified - return 403 if they are
-	// Note: Status field modifications are allowed (RMO can set terminating, agents can set active/failed)
-	if err := validateProtectedLabels(request.Body.Labels); err != nil {
-		return v1.UpdateProbe403JSONResponse{
-			Error: v1.ErrorObject{
-				Message: err.Error(),
-			},
-		}, nil
-	}
-
 	// First, get the existing probe.
 	existingProbe, err := s.Store.GetProbe(ctx, request.ProbeId)
 	if err != nil {
@@ -178,6 +182,26 @@ func (s Server) UpdateProbe(ctx context.Context, request v1.UpdateProbeRequestOb
 		}
 		log.Printf("Error getting probe %s from storage for update: %v", request.ProbeId, err)
 		return nil, fmt.Errorf("failed to get probe from storage for update: %w", err)
+	}
+
+	// Validate that protected labels are not being modified - return 403 if they are
+	// Note: Status field modifications are allowed (RMO can set terminating, agents can set active/failed)
+	if request.Body.Labels != nil {
+		if existingProbe.Labels == nil {
+			existingProbe.Labels = &v1.LabelsSchema{}
+		}
+
+		err := validateProtectedLabels(*request.Body.Labels, *existingProbe.Labels)
+		if err != nil {
+			response := v1.UpdateProbe403JSONResponse{
+				Error: v1.ErrorObject{
+					Message: err.Error(),
+				},
+			}
+			return response, nil
+		}
+
+		maps.Copy(*existingProbe.Labels, *request.Body.Labels)
 	}
 
 	// Now, update the fields from the request.
@@ -194,19 +218,6 @@ func (s Server) UpdateProbe(ctx context.Context, request v1.UpdateProbeRequestOb
 
 			// Return the probe as it was before deletion
 			return v1.UpdateProbe200JSONResponse(*existingProbe), nil
-		}
-	}
-
-	// Update user-provided labels (merge with existing labels)
-	if request.Body.Labels != nil {
-		// Initialize labels if they don't exist
-		if existingProbe.Labels == nil {
-			existingProbe.Labels = &v1.LabelsSchema{}
-		}
-
-		// Merge the new labels with existing ones
-		for key, value := range *request.Body.Labels {
-			(*existingProbe.Labels)[key] = value
 		}
 	}
 
@@ -272,7 +283,7 @@ func (s Server) updateProbeMetrics(ctx context.Context) {
 		}
 		private := "false"
 		if probe.Labels != nil {
-			if val, ok := (*probe.Labels)["private"]; ok && val == "true" {
+			if val, ok := (*probe.Labels)[privateProbeLabelKey]; ok && val == "true" {
 				private = "true"
 			}
 		}

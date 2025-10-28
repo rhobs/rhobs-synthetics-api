@@ -461,36 +461,47 @@ func TestUpdateProbe(t *testing.T) {
 			},
 		},
 		{
-			name:    "returns 403 when trying to modify protected label: app",
+			name:    "returns 403 when trying to create protected label: app",
 			probeID: probeID,
 			reqBody: v1.UpdateProbeJSONRequestBody{Labels: &v1.LabelsSchema{"app": "malicious-app"}},
 			store: &mockProbeStore{
 				probes: map[uuid.UUID]v1.ProbeObject{probeID: initialProbe},
 			},
 			expectedResponse: v1.UpdateProbe403JSONResponse{
-				Error: v1.ErrorObject{Message: "modification of system-managed label 'app' is forbidden"},
+				Error: v1.ErrorObject{Message: "creation of system-managed label 'app' is forbidden"},
 			},
 		},
 		{
-			name:    "returns 403 when trying to modify protected label: rhobs-synthetics/status",
+			name:    "returns 403 when trying to create protected label: rhobs-synthetics/status",
 			probeID: probeID,
 			reqBody: v1.UpdateProbeJSONRequestBody{Labels: &v1.LabelsSchema{"rhobs-synthetics/status": "hacked"}},
 			store: &mockProbeStore{
 				probes: map[uuid.UUID]v1.ProbeObject{probeID: initialProbe},
 			},
 			expectedResponse: v1.UpdateProbe403JSONResponse{
-				Error: v1.ErrorObject{Message: "modification of system-managed label 'rhobs-synthetics/status' is forbidden"},
+				Error: v1.ErrorObject{Message: "creation of system-managed label 'rhobs-synthetics/status' is forbidden"},
 			},
 		},
 		{
-			name:    "returns 403 when trying to modify protected label: rhobs-synthetics/static-url-hash",
+			name:    "returns 403 when trying to create protected label: rhobs-synthetics/static-url-hash",
 			probeID: probeID,
 			reqBody: v1.UpdateProbeJSONRequestBody{Labels: &v1.LabelsSchema{"rhobs-synthetics/static-url-hash": "fakehash"}},
 			store: &mockProbeStore{
 				probes: map[uuid.UUID]v1.ProbeObject{probeID: initialProbe},
 			},
 			expectedResponse: v1.UpdateProbe403JSONResponse{
-				Error: v1.ErrorObject{Message: "modification of system-managed label 'rhobs-synthetics/static-url-hash' is forbidden"},
+				Error: v1.ErrorObject{Message: "creation of system-managed label 'rhobs-synthetics/static-url-hash' is forbidden"},
+			},
+		},
+		{
+			name:    "returns 403 when trying to modify protected label: private",
+			probeID: probeID,
+			reqBody: v1.UpdateProbeJSONRequestBody{Labels: &v1.LabelsSchema{"private": ""}},
+			store: &mockProbeStore{
+				probes: map[uuid.UUID]v1.ProbeObject{probeID: initialProbe},
+			},
+			expectedResponse: v1.UpdateProbe403JSONResponse{
+				Error: v1.ErrorObject{Message: "creation of system-managed label 'private' is forbidden"},
 			},
 		},
 		{
@@ -539,6 +550,74 @@ func TestUpdateProbe(t *testing.T) {
 
 			if tc.postCheck != nil {
 				tc.postCheck(t, tc.store)
+			}
+		})
+	}
+}
+
+func Test_validateProtectedLabels(t *testing.T) {
+	tests := []struct {
+		name      string
+		old       v1.LabelsSchema
+		new       v1.LabelsSchema
+		expectErr bool
+	}{
+		{
+			name:      "label 'app' is protected",
+			old:       v1.LabelsSchema{baseAppLabelKey: "test"},
+			new:       v1.LabelsSchema{baseAppLabelKey: "bad"},
+			expectErr: true,
+		},
+		{
+			name:      "label 'rhobs-synthetics/status' is protected",
+			old:       v1.LabelsSchema{probeStatusLabelKey: "test"},
+			new:       v1.LabelsSchema{probeStatusLabelKey: "bad"},
+			expectErr: true,
+		},
+		{
+			name:      "label 'rhobs-synthetics/static-url-hash' is protected",
+			old:       v1.LabelsSchema{probeURLHashLabelKey: "test"},
+			new:       v1.LabelsSchema{probeURLHashLabelKey: "bad"},
+			expectErr: true,
+		},
+		{
+			name:      "label 'private' is protected",
+			old:       v1.LabelsSchema{privateProbeLabelKey: "test"},
+			new:       v1.LabelsSchema{privateProbeLabelKey: "bad"},
+			expectErr: true,
+		},
+		{
+			name:      "protected labels cannot be set if unset",
+			old:       v1.LabelsSchema{},
+			new:       v1.LabelsSchema{privateProbeLabelKey: "bad"},
+			expectErr: true,
+		},
+		{
+			name:      "no error if protected label is unchanged",
+			old:       v1.LabelsSchema{privateProbeLabelKey: "test"},
+			new:       v1.LabelsSchema{privateProbeLabelKey: "test"},
+			expectErr: false,
+		},
+		{
+			name:      "no error new labelschema is empty",
+			old:       v1.LabelsSchema{privateProbeLabelKey: "test"},
+			new:       v1.LabelsSchema{},
+			expectErr: false,
+		},
+		{
+			name:      "no error new labelschema changes unprotected labels",
+			old:       v1.LabelsSchema{privateProbeLabelKey: "test"},
+			new:       v1.LabelsSchema{"unprotectedLabel": "true"},
+			expectErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateProtectedLabels(tt.new, tt.old)
+
+			if (err != nil) != tt.expectErr {
+				t.Errorf("unexpected test result: expectedErr=%t, got err=%v", tt.expectErr, err)
 			}
 		})
 	}
