@@ -1,0 +1,33 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "github>konflux-ci/mintmaker//config/renovate/renovate.json",
+    "config:best-practices",
+    ":automergeDigest",
+    "group:allDigest"
+  ],
+  "enabledManagers": [
+    "tekton"
+  ],
+  "tekton": {
+    "includePaths": [
+      ".tekton/**"
+    ],
+    "enabled": true,
+    "packageRules": [
+      {
+        "matchUpdateTypes": [
+          "minor",
+          "patch",
+          "pin",
+          "digest"
+        ],
+        "automerge": true,
+        "addLabels": ["lgtm", "approved"]
+      }
+    ]
+  },
+  "dependencyDashboard": true,
+  "semanticCommits": "enabled",
+  "rebaseLabel": "needs-rebase"
+}
