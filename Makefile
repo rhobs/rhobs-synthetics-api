@@ -39,7 +39,8 @@ generate: ensure-oapi-codegen
 	$(GOENV) go generate -v ./...
 
 GOLANGCI_LINT_VERSION ?= v2.0.2
-GOLANGCI_LINT_BIN := $(shell go env GOPATH)/bin/golangci-lint
+# Extract first component of GOPATH (in case it has multiple colon-separated paths)
+GOLANGCI_LINT_BIN := $(shell echo $$(go env GOPATH) | cut -d: -f1)/bin/golangci-lint
 
 lint: $(GOLANGCI_LINT_BIN)
 	$(GOLANGCI_LINT_BIN) run ./...
