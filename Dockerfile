@@ -30,6 +30,7 @@ WORKDIR /home/rhobs
 
 # Copy the binary from the builder stage
 COPY --from=builder /app/rhobs-synthetics-api ./
+COPY --from=builder /app/LICENSE /licenses/LICENSE
 
 # Copy the entrypoint script
 COPY entrypoint.sh ./
