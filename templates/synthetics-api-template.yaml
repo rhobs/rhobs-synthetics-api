@@ -137,6 +137,28 @@ objects:
           terminationMessagePolicy: FallbackToLogsOnError
         serviceAccountName: synthetics-api
         terminationGracePeriodSeconds: 30
+# ServiceMonitor for COO-managed Prometheus (monitoring.rhobs API group).
+# This enables the local Prometheus (created by synthetics-agent) to scrape
+# synthetics-api health metrics and remote-write them to the RHOBS cell's
+# HCP tenant, where tenant-level alert rules are evaluated.
+- apiVersion: monitoring.rhobs/v1
+  kind: ServiceMonitor
+  metadata:
+    labels:
+      app.kubernetes.io/component: synthetics-api
+      app.kubernetes.io/instance: rhobs
+      app.kubernetes.io/name: synthetics-api
+      app.kubernetes.io/part-of: rhobs
+    name: synthetics-api-health
+    namespace: ${NAMESPACE}
+  spec:
+    selector:
+      matchLabels:
+        app.kubernetes.io/component: synthetics-api
+    endpoints:
+    - port: synthetics-api
+      path: /metrics
+      interval: 30s
 parameters:
 - name: IMAGE_TAG
   value: latest
