@@ -263,7 +263,15 @@ func (k *KubernetesProbeStore) ProbeWithURLHashExists(ctx context.Context, urlHa
 	if err != nil {
 		return false, fmt.Errorf("failed to check for existing probes: %w", err)
 	}
-	return len(existingProbes.Items) > 0, nil
+	// Exclude probes in terminating or failed status -- these are effectively
+	// inactive and should not block creation of a new probe for the same URL.
+	for _, cm := range existingProbes.Items {
+		status := cm.Labels[probeStatusLabelKey]
+		if status != string(v1.Terminating) && status != string(v1.Failed) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // GarbageCollectStaleProbes deletes probe ConfigMaps whose last-reconciled
