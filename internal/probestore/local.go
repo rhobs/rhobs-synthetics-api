@@ -378,3 +378,10 @@ func (l *LocalProbeStore) ProbeWithURLHashExists(ctx context.Context, urlHashStr
 
 	return found, nil
 }
+
+// GarbageCollectStaleProbes is a no-op for the local probe store since it's
+// only used for development. TTL-based garbage collection only applies to the
+// Kubernetes-backed store in production.
+func (l *LocalProbeStore) GarbageCollectStaleProbes(ctx context.Context) (int, error) {
+	return 0, nil
+}

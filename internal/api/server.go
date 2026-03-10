@@ -295,3 +295,31 @@ func (s Server) updateProbeMetrics(ctx context.Context) {
 		}
 	}
 }
+
+// GarbageCollectProbes runs a periodic loop that deletes stale probe ConfigMaps.
+// A probe is considered stale when its last-reconciled label is older than
+// the TTL (1 hour). RMO refreshes this timestamp every ~10 minutes for active
+// clusters, so a stale timestamp means the cluster was deleted.
+func (s Server) GarbageCollectProbes(ctx context.Context) {
+	const gcInterval = 15 * time.Minute
+	log.Printf("Starting probe garbage collection (interval: %s)", gcInterval)
+	ticker := time.NewTicker(gcInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			deleted, err := s.Store.GarbageCollectStaleProbes(ctx)
+			if err != nil {
+				log.Printf("GC: error during garbage collection: %v", err)
+				continue
+			}
+			if deleted > 0 {
+				log.Printf("GC: deleted %d stale probe(s)", deleted)
+			}
+		case <-ctx.Done():
+			log.Printf("Stopping probe garbage collection")
+			return
+		}
+	}
+}

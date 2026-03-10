@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	v1 "github.com/rhobs/rhobs-synthetics-api/pkg/apis/v1"
@@ -584,4 +585,182 @@ func TestKubernetesProbeStore_ProbeWithURLHashExists(t *testing.T) {
 			}
 		})
 	}
+}
+
+func makeProbeConfigMap(name, namespace string, labels map[string]string) *corev1.ConfigMap {
+	probeID := uuid.New()
+	probe := v1.ProbeObject{Id: probeID, StaticUrl: "http://example.com", Status: v1.Active}
+	data, _ := json.Marshal(probe)
+	allLabels := map[string]string{baseAppLabelKey: baseAppLabelValue}
+	for k, v := range labels {
+		allLabels[k] = v
+	}
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Labels:    allLabels,
+		},
+		Data: map[string]string{"probe-config.json": string(data)},
+	}
+}
+
+func TestKubernetesProbeStore_GarbageCollectStaleProbes(t *testing.T) {
+	ctx := context.Background()
+	fresh := time.Now().UTC().Format(time.RFC3339)
+	stale := time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339)
+
+	tests := []struct {
+		name            string
+		configMaps      []*corev1.ConfigMap
+		expectDeleted   int
+		expectRemaining int
+	}{
+		{
+			name:            "no probes",
+			configMaps:      []*corev1.ConfigMap{},
+			expectDeleted:   0,
+			expectRemaining: 0,
+		},
+		{
+			name: "fresh probe is not deleted",
+			configMaps: []*corev1.ConfigMap{
+				makeProbeConfigMap("probe-fresh", testNamespace, map[string]string{
+					lastReconciledLabelKey: fresh,
+				}),
+			},
+			expectDeleted:   0,
+			expectRemaining: 1,
+		},
+		{
+			name: "stale probe is deleted",
+			configMaps: []*corev1.ConfigMap{
+				makeProbeConfigMap("probe-stale", testNamespace, map[string]string{
+					lastReconciledLabelKey: stale,
+				}),
+			},
+			expectDeleted:   1,
+			expectRemaining: 0,
+		},
+		{
+			name: "probe without last-reconciled label is skipped",
+			configMaps: []*corev1.ConfigMap{
+				makeProbeConfigMap("probe-no-label", testNamespace, map[string]string{}),
+			},
+			expectDeleted:   0,
+			expectRemaining: 1,
+		},
+		{
+			name: "probe with invalid timestamp is skipped",
+			configMaps: []*corev1.ConfigMap{
+				makeProbeConfigMap("probe-bad-ts", testNamespace, map[string]string{
+					lastReconciledLabelKey: "not-a-timestamp",
+				}),
+			},
+			expectDeleted:   0,
+			expectRemaining: 1,
+		},
+		{
+			name: "mix of fresh, stale, and unlabeled probes",
+			configMaps: []*corev1.ConfigMap{
+				makeProbeConfigMap("probe-fresh-1", testNamespace, map[string]string{
+					lastReconciledLabelKey: fresh,
+				}),
+				makeProbeConfigMap("probe-stale-1", testNamespace, map[string]string{
+					lastReconciledLabelKey: stale,
+				}),
+				makeProbeConfigMap("probe-stale-2", testNamespace, map[string]string{
+					lastReconciledLabelKey: stale,
+				}),
+				makeProbeConfigMap("probe-no-label", testNamespace, map[string]string{}),
+				makeProbeConfigMap("probe-fresh-2", testNamespace, map[string]string{
+					lastReconciledLabelKey: fresh,
+				}),
+			},
+			expectDeleted:   2,
+			expectRemaining: 3,
+		},
+		{
+			name: "probe just under TTL is not deleted",
+			configMaps: []*corev1.ConfigMap{
+				makeProbeConfigMap("probe-boundary", testNamespace, map[string]string{
+					lastReconciledLabelKey: time.Now().UTC().Add(-staleProbeTTL + 5*time.Minute).Format(time.RFC3339),
+				}),
+			},
+			expectDeleted:   0,
+			expectRemaining: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var objects []runtime.Object
+			for _, cm := range tt.configMaps {
+				objects = append(objects, cm)
+			}
+			client := fake.NewSimpleClientset(objects...)
+			store := &KubernetesProbeStore{
+				Client:    client,
+				Namespace: testNamespace,
+			}
+
+			deleted, err := store.GarbageCollectStaleProbes(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectDeleted, deleted)
+
+			remaining, err := client.CoreV1().ConfigMaps(testNamespace).List(ctx, metav1.ListOptions{
+				LabelSelector: fmt.Sprintf("%s=%s", baseAppLabelKey, baseAppLabelValue),
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectRemaining, len(remaining.Items))
+		})
+	}
+}
+
+func TestKubernetesProbeStore_GarbageCollectStaleProbes_ListError(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("list", "configmaps", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("api server unavailable")
+	})
+
+	store := &KubernetesProbeStore{
+		Client:    client,
+		Namespace: testNamespace,
+	}
+
+	deleted, err := store.GarbageCollectStaleProbes(ctx)
+	assert.Error(t, err)
+	assert.Equal(t, 0, deleted)
+	assert.Contains(t, err.Error(), "failed to list probe configmaps for GC")
+}
+
+func TestKubernetesProbeStore_GarbageCollectStaleProbes_DeleteError(t *testing.T) {
+	ctx := context.Background()
+	stale := time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339)
+
+	cm := makeProbeConfigMap("probe-stale", testNamespace, map[string]string{
+		lastReconciledLabelKey: stale,
+	})
+
+	client := fake.NewSimpleClientset(cm)
+	client.PrependReactor("delete", "configmaps", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("permission denied")
+	})
+
+	store := &KubernetesProbeStore{
+		Client:    client,
+		Namespace: testNamespace,
+	}
+
+	deleted, err := store.GarbageCollectStaleProbes(ctx)
+	require.NoError(t, err) // delete errors are logged but don't fail the GC run
+	assert.Equal(t, 0, deleted)
+
+	// Probe should still exist since delete failed
+	remaining, err := client.CoreV1().ConfigMaps(testNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("%s=%s", baseAppLabelKey, baseAppLabelValue),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(remaining.Items))
 }
