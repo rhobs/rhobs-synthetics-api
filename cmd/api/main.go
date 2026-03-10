@@ -162,6 +162,7 @@ func runWebServer(addr string) error {
 	monitorCtx, cancelMonitor := context.WithCancel(context.Background())
 	defer cancelMonitor()
 	go server.MonitorProbes(monitorCtx)
+	go server.GarbageCollectProbes(monitorCtx)
 
 	// Start the server in a goroutine so it doesn't block the main thread
 	go func() {

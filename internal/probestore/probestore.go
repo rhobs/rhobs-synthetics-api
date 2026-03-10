@@ -16,4 +16,5 @@ type ProbeStorage interface {
 	DeleteProbe(ctx context.Context, probeID uuid.UUID) error
 	DeleteProbeStorage(ctx context.Context, probeID uuid.UUID) error
 	ProbeWithURLHashExists(ctx context.Context, urlHashString string) (bool, error)
+	GarbageCollectStaleProbes(ctx context.Context) (int, error)
 }

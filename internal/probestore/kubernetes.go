@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/google/uuid"
 	v1 "github.com/rhobs/rhobs-synthetics-api/pkg/apis/v1"
@@ -15,6 +16,14 @@ import (
 
 const (
 	probeConfigMapNameFormat = "probe-config-%s"
+
+	// lastReconciledLabelKey is the label RMO uses to stamp a heartbeat timestamp
+	// on each probe ConfigMap during reconciliation.
+	lastReconciledLabelKey = "last-reconciled"
+
+	// staleProbeTTL is how long a probe can go without being reconciled before
+	// the GC loop considers it stale and deletes it.
+	staleProbeTTL = 1 * time.Hour
 )
 
 // KubernetesProbeStore implements the ProbeStorage interface using Kubernetes ConfigMaps.
@@ -255,4 +264,55 @@ func (k *KubernetesProbeStore) ProbeWithURLHashExists(ctx context.Context, urlHa
 		return false, fmt.Errorf("failed to check for existing probes: %w", err)
 	}
 	return len(existingProbes.Items) > 0, nil
+}
+
+// GarbageCollectStaleProbes deletes probe ConfigMaps whose last-reconciled
+// timestamp is older than staleProbeTTL. Active clusters get reconciled every
+// ~10 minutes by RMO, so a stale timestamp indicates the managing cluster has
+// been deleted and the probe is orphaned.
+//
+// Probes without a last-reconciled label are skipped to avoid deleting probes
+// that predate the heartbeat mechanism.
+func (k *KubernetesProbeStore) GarbageCollectStaleProbes(ctx context.Context) (int, error) {
+	selector := fmt.Sprintf("%s=%s", baseAppLabelKey, baseAppLabelValue)
+	configMaps, err := k.Client.CoreV1().ConfigMaps(k.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: selector,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to list probe configmaps for GC: %w", err)
+	}
+
+	now := time.Now().UTC()
+	deleted := 0
+
+	for _, cm := range configMaps.Items {
+		lastReconciledStr, ok := cm.Labels[lastReconciledLabelKey]
+		if !ok {
+			// No last-reconciled label -- this probe predates the heartbeat
+			// mechanism or was never reconciled. Skip it to avoid deleting
+			// probes that haven't been updated by the new RMO yet.
+			continue
+		}
+
+		lastReconciled, err := time.Parse(time.RFC3339, lastReconciledStr)
+		if err != nil {
+			log.Printf("GC: could not parse last-reconciled label %q on configmap %s, skipping: %v", lastReconciledStr, cm.Name, err)
+			continue
+		}
+
+		if now.Sub(lastReconciled) <= staleProbeTTL {
+			continue // still fresh
+		}
+
+		// Probe is stale, delete it
+		log.Printf("GC: deleting stale probe configmap %s (last-reconciled: %s, age: %s)", cm.Name, lastReconciledStr, now.Sub(lastReconciled).Round(time.Second))
+		err = k.Client.CoreV1().ConfigMaps(k.Namespace).Delete(ctx, cm.Name, metav1.DeleteOptions{})
+		if err != nil {
+			log.Printf("GC: failed to delete stale probe configmap %s: %v", cm.Name, err)
+			continue
+		}
+		deleted++
+	}
+
+	return deleted, nil
 }

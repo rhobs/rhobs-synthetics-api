@@ -114,6 +114,10 @@ func (m *mockProbeStore) ProbeWithURLHashExists(ctx context.Context, urlHashStri
 	return exists, nil
 }
 
+func (m *mockProbeStore) GarbageCollectStaleProbes(ctx context.Context) (int, error) {
+	return 0, nil
+}
+
 func TestListProbes(t *testing.T) {
 	probe1ID := uuid.New()
 	probe2ID := uuid.New()
