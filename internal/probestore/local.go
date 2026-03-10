@@ -362,10 +362,13 @@ func (l *LocalProbeStore) ProbeWithURLHashExists(ctx context.Context, urlHashStr
 		}
 
 		// Check if this probe has the URL hash we're looking for
+		// Exclude probes in terminating or failed status
 		if probe.Labels != nil {
 			if hashValue, exists := (*probe.Labels)[probeURLHashLabelKey]; exists && hashValue == urlHashString {
-				found = true
-				return filepath.SkipAll // Stop walking, we found what we need
+				if probe.Status != v1.Terminating && probe.Status != v1.Failed {
+					found = true
+					return filepath.SkipAll // Stop walking, we found what we need
+				}
 			}
 		}
 

@@ -568,6 +568,42 @@ func TestKubernetesProbeStore_ProbeWithURLHashExists(t *testing.T) {
 			expectExists: false,
 			expectErr:    false,
 		},
+		{
+			name:    "terminating probe with URL hash is excluded",
+			urlHash: urlHash,
+			clientset: fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "probe-terminating",
+					Namespace: testNamespace,
+					Labels: map[string]string{
+						baseAppLabelKey:      baseAppLabelValue,
+						probeURLHashLabelKey: urlHash,
+						probeStatusLabelKey:  string(v1.Terminating),
+					},
+				},
+				Data: map[string]string{"probe-config.json": mustMarshal(t, probe)},
+			}),
+			expectExists: false,
+			expectErr:    false,
+		},
+		{
+			name:    "failed probe with URL hash is excluded",
+			urlHash: urlHash,
+			clientset: fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "probe-failed",
+					Namespace: testNamespace,
+					Labels: map[string]string{
+						baseAppLabelKey:      baseAppLabelValue,
+						probeURLHashLabelKey: urlHash,
+						probeStatusLabelKey:  string(v1.Failed),
+					},
+				},
+				Data: map[string]string{"probe-config.json": mustMarshal(t, probe)},
+			}),
+			expectExists: false,
+			expectErr:    false,
+		},
 	}
 
 	for _, tc := range testCases {
