@@ -109,6 +109,8 @@ objects:
           env:
           - name: NAMESPACE
             value: ${NAMESPACE}
+          - name: PROBE_STALE_TTL
+            value: ${PROBE_STALE_TTL}
           ports:
           - containerPort: 8080
             name: synthetics-api
@@ -164,3 +166,5 @@ parameters:
   value: latest
 - name: NAMESPACE
   value: rhobs
+- name: PROBE_STALE_TTL
+  value: "15m"
