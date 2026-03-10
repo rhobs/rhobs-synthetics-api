@@ -607,8 +607,8 @@ func makeProbeConfigMap(name, namespace string, labels map[string]string) *corev
 
 func TestKubernetesProbeStore_GarbageCollectStaleProbes(t *testing.T) {
 	ctx := context.Background()
-	fresh := time.Now().UTC().Format(time.RFC3339)
-	stale := time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339)
+	fresh := time.Now().UTC().Format("20060102T150405Z")
+	stale := time.Now().UTC().Add(-2 * time.Hour).Format("20060102T150405Z")
 
 	tests := []struct {
 		name            string
@@ -684,7 +684,7 @@ func TestKubernetesProbeStore_GarbageCollectStaleProbes(t *testing.T) {
 			name: "probe just under TTL is not deleted",
 			configMaps: []*corev1.ConfigMap{
 				makeProbeConfigMap("probe-boundary", testNamespace, map[string]string{
-					lastReconciledLabelKey: time.Now().UTC().Add(-staleProbeTTL + 5*time.Minute).Format(time.RFC3339),
+					lastReconciledLabelKey: time.Now().UTC().Add(-staleProbeTTL + 5*time.Minute).Format("20060102T150405Z"),
 				}),
 			},
 			expectDeleted:   0,
@@ -737,7 +737,7 @@ func TestKubernetesProbeStore_GarbageCollectStaleProbes_ListError(t *testing.T) 
 
 func TestKubernetesProbeStore_GarbageCollectStaleProbes_DeleteError(t *testing.T) {
 	ctx := context.Background()
-	stale := time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339)
+	stale := time.Now().UTC().Add(-2 * time.Hour).Format("20060102T150405Z")
 
 	cm := makeProbeConfigMap("probe-stale", testNamespace, map[string]string{
 		lastReconciledLabelKey: stale,

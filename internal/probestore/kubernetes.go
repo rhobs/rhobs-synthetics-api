@@ -294,7 +294,7 @@ func (k *KubernetesProbeStore) GarbageCollectStaleProbes(ctx context.Context) (i
 			continue
 		}
 
-		lastReconciled, err := time.Parse(time.RFC3339, lastReconciledStr)
+		lastReconciled, err := time.Parse("20060102T150405Z", lastReconciledStr)
 		if err != nil {
 			log.Printf("GC: could not parse last-reconciled label %q on configmap %s, skipping: %v", lastReconciledStr, cm.Name, err)
 			continue
