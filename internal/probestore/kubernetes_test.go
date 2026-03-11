@@ -720,7 +720,7 @@ func TestKubernetesProbeStore_GarbageCollectStaleProbes(t *testing.T) {
 			name: "probe just under TTL is not deleted",
 			configMaps: []*corev1.ConfigMap{
 				makeProbeConfigMap("probe-boundary", testNamespace, map[string]string{
-					lastReconciledLabelKey: time.Now().UTC().Add(-staleProbeTTL + 5*time.Minute).Format("20060102T150405Z"),
+					lastReconciledLabelKey: time.Now().UTC().Add(-defaultStaleProbeTTL + 5*time.Minute).Format("20060102T150405Z"),
 				}),
 			},
 			expectDeleted:   0,
@@ -736,8 +736,9 @@ func TestKubernetesProbeStore_GarbageCollectStaleProbes(t *testing.T) {
 			}
 			client := fake.NewSimpleClientset(objects...)
 			store := &KubernetesProbeStore{
-				Client:    client,
-				Namespace: testNamespace,
+				Client:        client,
+				Namespace:     testNamespace,
+				StaleProbeTTL: defaultStaleProbeTTL,
 			}
 
 			deleted, err := store.GarbageCollectStaleProbes(ctx)

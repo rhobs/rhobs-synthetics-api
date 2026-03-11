@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,15 +22,17 @@ const (
 	// on each probe ConfigMap during reconciliation.
 	lastReconciledLabelKey = "last-reconciled"
 
-	// staleProbeTTL is how long a probe can go without being reconciled before
-	// the GC loop considers it stale and deletes it.
-	staleProbeTTL = 1 * time.Hour
+	// defaultStaleProbeTTL is how long a probe can go without being reconciled
+	// before the GC loop considers it stale and deletes it.
+	// Override with PROBE_STALE_TTL env var (e.g., "15m", "1h").
+	defaultStaleProbeTTL = 15 * time.Minute
 )
 
 // KubernetesProbeStore implements the ProbeStorage interface using Kubernetes ConfigMaps.
 type KubernetesProbeStore struct {
-	Client    kubernetes.Interface
-	Namespace string
+	Client        kubernetes.Interface
+	Namespace     string
+	StaleProbeTTL time.Duration
 }
 
 // NewKubernetesProbeStore creates a new KubernetesProbeStore.
@@ -37,10 +40,21 @@ type KubernetesProbeStore struct {
 // RBAC permissions for the service account only allow for namespaced resource access,
 // so a cluster-level check for a namespace is not possible and also redundant.
 func NewKubernetesProbeStore(ctx context.Context, client kubernetes.Interface, namespace string) (*KubernetesProbeStore, error) {
-	log.Printf("Initializing Kubernetes probe store in namespace %q", namespace)
+	ttl := defaultStaleProbeTTL
+	if v := os.Getenv("PROBE_STALE_TTL"); v != "" {
+		parsed, err := time.ParseDuration(v)
+		if err != nil {
+			log.Printf("Warning: invalid PROBE_STALE_TTL %q, using default %s: %v", v, defaultStaleProbeTTL, err)
+		} else {
+			ttl = parsed
+			log.Printf("Using custom PROBE_STALE_TTL: %s", ttl)
+		}
+	}
+	log.Printf("Initializing Kubernetes probe store in namespace %q (stale probe TTL: %s)", namespace, ttl)
 	return &KubernetesProbeStore{
-		Client:    client,
-		Namespace: namespace,
+		Client:        client,
+		Namespace:     namespace,
+		StaleProbeTTL: ttl,
 	}, nil
 }
 
@@ -308,7 +322,7 @@ func (k *KubernetesProbeStore) GarbageCollectStaleProbes(ctx context.Context) (i
 			continue
 		}
 
-		if now.Sub(lastReconciled) <= staleProbeTTL {
+		if now.Sub(lastReconciled) <= k.StaleProbeTTL {
 			continue // still fresh
 		}
 
