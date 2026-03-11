@@ -26,6 +26,11 @@ const (
 	// before the GC loop considers it stale and deletes it.
 	// Override with PROBE_STALE_TTL env var (e.g., "15m", "1h").
 	defaultStaleProbeTTL = 15 * time.Minute
+
+	// unlabeledProbeTTL is how long a probe can exist without ever receiving
+	// a last-reconciled heartbeat before GC deletes it. This catches probes
+	// from non-RHOBS-enabled sectors that will never get heartbeats.
+	unlabeledProbeTTL = 24 * time.Hour
 )
 
 // KubernetesProbeStore implements the ProbeStorage interface using Kubernetes ConfigMaps.
@@ -288,13 +293,12 @@ func (k *KubernetesProbeStore) ProbeWithURLHashExists(ctx context.Context, urlHa
 	return false, nil
 }
 
-// GarbageCollectStaleProbes deletes probe ConfigMaps whose last-reconciled
-// timestamp is older than staleProbeTTL. Active clusters get reconciled every
-// ~10 minutes by RMO, so a stale timestamp indicates the managing cluster has
-// been deleted and the probe is orphaned.
+// GarbageCollectStaleProbes deletes probe ConfigMaps that are orphaned:
+// 1. Probes with a last-reconciled timestamp older than StaleProbeTTL (default 15m)
+// 2. Probes without a last-reconciled label that are older than 24 hours
 //
-// Probes without a last-reconciled label are skipped to avoid deleting probes
-// that predate the heartbeat mechanism.
+// Case 1 catches probes for deleted clusters (RMO stops reconciling).
+// Case 2 catches probes from non-RHOBS-enabled sectors that never get heartbeats.
 func (k *KubernetesProbeStore) GarbageCollectStaleProbes(ctx context.Context) (int, error) {
 	selector := fmt.Sprintf("%s=%s", baseAppLabelKey, baseAppLabelValue)
 	configMaps, err := k.Client.CoreV1().ConfigMaps(k.Namespace).List(ctx, metav1.ListOptions{
@@ -310,9 +314,18 @@ func (k *KubernetesProbeStore) GarbageCollectStaleProbes(ctx context.Context) (i
 	for _, cm := range configMaps.Items {
 		lastReconciledStr, ok := cm.Labels[lastReconciledLabelKey]
 		if !ok {
-			// No last-reconciled label -- this probe predates the heartbeat
-			// mechanism or was never reconciled. Skip it to avoid deleting
-			// probes that haven't been updated by the new RMO yet.
+			// No last-reconciled label -- check if the probe is old enough
+			// to be considered abandoned (e.g., from a non-RHOBS-enabled sector
+			// that will never get heartbeats).
+			if !cm.CreationTimestamp.IsZero() && now.Sub(cm.CreationTimestamp.Time) > unlabeledProbeTTL {
+				log.Printf("GC: deleting unlabeled probe configmap %s (created: %s, age: %s, no heartbeat ever received)",
+					cm.Name, cm.CreationTimestamp.Format("20060102T150405Z"), now.Sub(cm.CreationTimestamp.Time).Round(time.Second))
+				if err := k.Client.CoreV1().ConfigMaps(k.Namespace).Delete(ctx, cm.Name, metav1.DeleteOptions{}); err != nil {
+					log.Printf("GC: failed to delete unlabeled probe configmap %s: %v", cm.Name, err)
+					continue
+				}
+				deleted++
+			}
 			continue
 		}
 

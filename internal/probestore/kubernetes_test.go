@@ -624,6 +624,10 @@ func TestKubernetesProbeStore_ProbeWithURLHashExists(t *testing.T) {
 }
 
 func makeProbeConfigMap(name, namespace string, labels map[string]string) *corev1.ConfigMap {
+	return makeProbeConfigMapWithAge(name, namespace, labels, time.Time{})
+}
+
+func makeProbeConfigMapWithAge(name, namespace string, labels map[string]string, createdAt time.Time) *corev1.ConfigMap {
 	probeID := uuid.New()
 	probe := v1.ProbeObject{Id: probeID, StaticUrl: "http://example.com", Status: v1.Active}
 	data, _ := json.Marshal(probe)
@@ -631,7 +635,7 @@ func makeProbeConfigMap(name, namespace string, labels map[string]string) *corev
 	for k, v := range labels {
 		allLabels[k] = v
 	}
-	return &corev1.ConfigMap{
+	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
@@ -639,6 +643,10 @@ func makeProbeConfigMap(name, namespace string, labels map[string]string) *corev
 		},
 		Data: map[string]string{"probe-config.json": string(data)},
 	}
+	if !createdAt.IsZero() {
+		cm.CreationTimestamp = metav1.NewTime(createdAt)
+	}
+	return cm
 }
 
 func TestKubernetesProbeStore_GarbageCollectStaleProbes(t *testing.T) {
@@ -715,6 +723,22 @@ func TestKubernetesProbeStore_GarbageCollectStaleProbes(t *testing.T) {
 			},
 			expectDeleted:   2,
 			expectRemaining: 3,
+		},
+		{
+			name: "unlabeled probe older than 24h is deleted",
+			configMaps: []*corev1.ConfigMap{
+				makeProbeConfigMapWithAge("probe-old-unlabeled", testNamespace, map[string]string{}, time.Now().UTC().Add(-48*time.Hour)),
+			},
+			expectDeleted:   1,
+			expectRemaining: 0,
+		},
+		{
+			name: "unlabeled probe younger than 24h is kept",
+			configMaps: []*corev1.ConfigMap{
+				makeProbeConfigMapWithAge("probe-young-unlabeled", testNamespace, map[string]string{}, time.Now().UTC().Add(-1*time.Hour)),
+			},
+			expectDeleted:   0,
+			expectRemaining: 1,
 		},
 		{
 			name: "probe just under TTL is not deleted",
