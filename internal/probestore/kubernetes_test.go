@@ -760,9 +760,10 @@ func TestKubernetesProbeStore_GarbageCollectStaleProbes(t *testing.T) {
 			}
 			client := fake.NewSimpleClientset(objects...)
 			store := &KubernetesProbeStore{
-				Client:        client,
-				Namespace:     testNamespace,
-				StaleProbeTTL: defaultStaleProbeTTL,
+				Client:           client,
+				Namespace:        testNamespace,
+				StaleProbeTTL:    defaultStaleProbeTTL,
+				UnlabeledProbeTTL: defaultUnlabeledProbeTTL,
 			}
 
 			deleted, err := store.GarbageCollectStaleProbes(ctx)

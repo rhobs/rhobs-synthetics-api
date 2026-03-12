@@ -27,17 +27,18 @@ const (
 	// Override with PROBE_STALE_TTL env var (e.g., "15m", "1h").
 	defaultStaleProbeTTL = 15 * time.Minute
 
-	// unlabeledProbeTTL is how long a probe can exist without ever receiving
-	// a last-reconciled heartbeat before GC deletes it. This catches probes
-	// from non-RHOBS-enabled sectors that will never get heartbeats.
-	unlabeledProbeTTL = 24 * time.Hour
+	// defaultUnlabeledProbeTTL is how long a probe can exist without ever
+	// receiving a last-reconciled heartbeat before GC deletes it.
+	// Override with PROBE_UNLABELED_TTL env var (e.g., "24h", "48h").
+	defaultUnlabeledProbeTTL = 24 * time.Hour
 )
 
 // KubernetesProbeStore implements the ProbeStorage interface using Kubernetes ConfigMaps.
 type KubernetesProbeStore struct {
-	Client        kubernetes.Interface
-	Namespace     string
-	StaleProbeTTL time.Duration
+	Client           kubernetes.Interface
+	Namespace        string
+	StaleProbeTTL    time.Duration
+	UnlabeledProbeTTL time.Duration
 }
 
 // NewKubernetesProbeStore creates a new KubernetesProbeStore.
@@ -45,21 +46,32 @@ type KubernetesProbeStore struct {
 // RBAC permissions for the service account only allow for namespaced resource access,
 // so a cluster-level check for a namespace is not possible and also redundant.
 func NewKubernetesProbeStore(ctx context.Context, client kubernetes.Interface, namespace string) (*KubernetesProbeStore, error) {
-	ttl := defaultStaleProbeTTL
+	staleTTL := defaultStaleProbeTTL
 	if v := os.Getenv("PROBE_STALE_TTL"); v != "" {
 		parsed, err := time.ParseDuration(v)
 		if err != nil {
 			log.Printf("Warning: invalid PROBE_STALE_TTL %q, using default %s: %v", v, defaultStaleProbeTTL, err)
 		} else {
-			ttl = parsed
-			log.Printf("Using custom PROBE_STALE_TTL: %s", ttl)
+			staleTTL = parsed
+			log.Printf("Using custom PROBE_STALE_TTL: %s", staleTTL)
 		}
 	}
-	log.Printf("Initializing Kubernetes probe store in namespace %q (stale probe TTL: %s)", namespace, ttl)
+	unlabeledTTL := defaultUnlabeledProbeTTL
+	if v := os.Getenv("PROBE_UNLABELED_TTL"); v != "" {
+		parsed, err := time.ParseDuration(v)
+		if err != nil {
+			log.Printf("Warning: invalid PROBE_UNLABELED_TTL %q, using default %s: %v", v, defaultUnlabeledProbeTTL, err)
+		} else {
+			unlabeledTTL = parsed
+			log.Printf("Using custom PROBE_UNLABELED_TTL: %s", unlabeledTTL)
+		}
+	}
+	log.Printf("Initializing Kubernetes probe store in namespace %q (stale TTL: %s, unlabeled TTL: %s)", namespace, staleTTL, unlabeledTTL)
 	return &KubernetesProbeStore{
-		Client:        client,
-		Namespace:     namespace,
-		StaleProbeTTL: ttl,
+		Client:           client,
+		Namespace:        namespace,
+		StaleProbeTTL:    staleTTL,
+		UnlabeledProbeTTL: unlabeledTTL,
 	}, nil
 }
 
@@ -317,7 +329,7 @@ func (k *KubernetesProbeStore) GarbageCollectStaleProbes(ctx context.Context) (i
 			// No last-reconciled label -- check if the probe is old enough
 			// to be considered abandoned (e.g., from a non-RHOBS-enabled sector
 			// that will never get heartbeats).
-			if !cm.CreationTimestamp.IsZero() && now.Sub(cm.CreationTimestamp.Time) > unlabeledProbeTTL {
+			if !cm.CreationTimestamp.IsZero() && now.Sub(cm.CreationTimestamp.Time) > k.UnlabeledProbeTTL {
 				log.Printf("GC: deleting unlabeled probe configmap %s (created: %s, age: %s, no heartbeat ever received)",
 					cm.Name, cm.CreationTimestamp.Format("20060102T150405Z"), now.Sub(cm.CreationTimestamp.Time).Round(time.Second))
 				if err := k.Client.CoreV1().ConfigMaps(k.Namespace).Delete(ctx, cm.Name, metav1.DeleteOptions{}); err != nil {
