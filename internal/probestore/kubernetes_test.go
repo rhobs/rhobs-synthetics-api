@@ -627,19 +627,25 @@ func makeProbeConfigMap(name, namespace string, labels map[string]string) *corev
 	return makeProbeConfigMapWithAge(name, namespace, labels, time.Time{})
 }
 
-func makeProbeConfigMapWithAge(name, namespace string, labels map[string]string, createdAt time.Time) *corev1.ConfigMap {
+func makeProbeConfigMapWithAge(name, namespace string, extraMeta map[string]string, createdAt time.Time) *corev1.ConfigMap {
 	probeID := uuid.New()
 	probe := v1.ProbeObject{Id: probeID, StaticUrl: "http://example.com", Status: v1.Active}
 	data, _ := json.Marshal(probe)
 	allLabels := map[string]string{baseAppLabelKey: baseAppLabelValue}
-	for k, v := range labels {
-		allLabels[k] = v
+	annotations := map[string]string{}
+	for k, v := range extraMeta {
+		if k == lastReconciledKey {
+			annotations[k] = v
+		} else {
+			allLabels[k] = v
+		}
 	}
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-			Labels:    allLabels,
+			Name:        name,
+			Namespace:   namespace,
+			Labels:      allLabels,
+			Annotations: annotations,
 		},
 		Data: map[string]string{"probe-config.json": string(data)},
 	}
@@ -670,7 +676,7 @@ func TestKubernetesProbeStore_GarbageCollectStaleProbes(t *testing.T) {
 			name: "fresh probe is not deleted",
 			configMaps: []*corev1.ConfigMap{
 				makeProbeConfigMap("probe-fresh", testNamespace, map[string]string{
-					lastReconciledLabelKey: fresh,
+					lastReconciledKey: fresh,
 				}),
 			},
 			expectDeleted:   0,
@@ -680,7 +686,7 @@ func TestKubernetesProbeStore_GarbageCollectStaleProbes(t *testing.T) {
 			name: "stale probe is deleted",
 			configMaps: []*corev1.ConfigMap{
 				makeProbeConfigMap("probe-stale", testNamespace, map[string]string{
-					lastReconciledLabelKey: stale,
+					lastReconciledKey: stale,
 				}),
 			},
 			expectDeleted:   1,
@@ -698,44 +704,44 @@ func TestKubernetesProbeStore_GarbageCollectStaleProbes(t *testing.T) {
 			name: "probe with invalid timestamp is skipped",
 			configMaps: []*corev1.ConfigMap{
 				makeProbeConfigMap("probe-bad-ts", testNamespace, map[string]string{
-					lastReconciledLabelKey: "not-a-timestamp",
+					lastReconciledKey: "not-a-timestamp",
 				}),
 			},
 			expectDeleted:   0,
 			expectRemaining: 1,
 		},
 		{
-			name: "mix of fresh, stale, and unlabeled probes",
+			name: "mix of fresh, stale, and no-heartbeat probes",
 			configMaps: []*corev1.ConfigMap{
 				makeProbeConfigMap("probe-fresh-1", testNamespace, map[string]string{
-					lastReconciledLabelKey: fresh,
+					lastReconciledKey: fresh,
 				}),
 				makeProbeConfigMap("probe-stale-1", testNamespace, map[string]string{
-					lastReconciledLabelKey: stale,
+					lastReconciledKey: stale,
 				}),
 				makeProbeConfigMap("probe-stale-2", testNamespace, map[string]string{
-					lastReconciledLabelKey: stale,
+					lastReconciledKey: stale,
 				}),
 				makeProbeConfigMap("probe-no-label", testNamespace, map[string]string{}),
 				makeProbeConfigMap("probe-fresh-2", testNamespace, map[string]string{
-					lastReconciledLabelKey: fresh,
+					lastReconciledKey: fresh,
 				}),
 			},
 			expectDeleted:   2,
 			expectRemaining: 3,
 		},
 		{
-			name: "unlabeled probe older than 24h is deleted",
+			name: "no-heartbeat probe older than 24h is deleted",
 			configMaps: []*corev1.ConfigMap{
-				makeProbeConfigMapWithAge("probe-old-unlabeled", testNamespace, map[string]string{}, time.Now().UTC().Add(-48*time.Hour)),
+				makeProbeConfigMapWithAge("probe-old-no-heartbeat", testNamespace, map[string]string{}, time.Now().UTC().Add(-48*time.Hour)),
 			},
 			expectDeleted:   1,
 			expectRemaining: 0,
 		},
 		{
-			name: "unlabeled probe younger than 24h is kept",
+			name: "no-heartbeat probe younger than 24h is kept",
 			configMaps: []*corev1.ConfigMap{
-				makeProbeConfigMapWithAge("probe-young-unlabeled", testNamespace, map[string]string{}, time.Now().UTC().Add(-1*time.Hour)),
+				makeProbeConfigMapWithAge("probe-young-no-heartbeat", testNamespace, map[string]string{}, time.Now().UTC().Add(-1*time.Hour)),
 			},
 			expectDeleted:   0,
 			expectRemaining: 1,
@@ -744,7 +750,7 @@ func TestKubernetesProbeStore_GarbageCollectStaleProbes(t *testing.T) {
 			name: "probe just under TTL is not deleted",
 			configMaps: []*corev1.ConfigMap{
 				makeProbeConfigMap("probe-boundary", testNamespace, map[string]string{
-					lastReconciledLabelKey: time.Now().UTC().Add(-defaultStaleProbeTTL + 5*time.Minute).Format("20060102T150405Z"),
+					lastReconciledKey: time.Now().UTC().Add(-defaultStaleProbeTTL + 5*time.Minute).Format("20060102T150405Z"),
 				}),
 			},
 			expectDeleted:   0,
@@ -763,7 +769,7 @@ func TestKubernetesProbeStore_GarbageCollectStaleProbes(t *testing.T) {
 				Client:           client,
 				Namespace:        testNamespace,
 				StaleProbeTTL:    defaultStaleProbeTTL,
-				UnlabeledProbeTTL: defaultUnlabeledProbeTTL,
+				NoHeartbeatProbeTTL: defaultNoHeartbeatProbeTTL,
 			}
 
 			deleted, err := store.GarbageCollectStaleProbes(ctx)
@@ -802,7 +808,7 @@ func TestKubernetesProbeStore_GarbageCollectStaleProbes_DeleteError(t *testing.T
 	stale := time.Now().UTC().Add(-2 * time.Hour).Format("20060102T150405Z")
 
 	cm := makeProbeConfigMap("probe-stale", testNamespace, map[string]string{
-		lastReconciledLabelKey: stale,
+		lastReconciledKey: stale,
 	})
 
 	client := fake.NewSimpleClientset(cm)

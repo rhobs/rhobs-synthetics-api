@@ -18,27 +18,28 @@ import (
 const (
 	probeConfigMapNameFormat = "probe-config-%s"
 
-	// lastReconciledLabelKey is the label RMO uses to stamp a heartbeat timestamp
-	// on each probe ConfigMap during reconciliation.
-	lastReconciledLabelKey = "last-reconciled"
+	// lastReconciledKey is the key used to stamp a heartbeat timestamp on each
+	// probe ConfigMap during reconciliation. Stored as an annotation (not a label)
+	// to avoid Prometheus metric label churn.
+	lastReconciledKey = "last-reconciled"
 
 	// defaultStaleProbeTTL is how long a probe can go without being reconciled
 	// before the GC loop considers it stale and deletes it.
 	// Override with PROBE_STALE_TTL env var (e.g., "15m", "1h").
 	defaultStaleProbeTTL = 15 * time.Minute
 
-	// defaultUnlabeledProbeTTL is how long a probe can exist without ever
+	// defaultNoHeartbeatProbeTTL is how long a probe can exist without ever
 	// receiving a last-reconciled heartbeat before GC deletes it.
 	// Override with PROBE_UNLABELED_TTL env var (e.g., "24h", "48h").
-	defaultUnlabeledProbeTTL = 24 * time.Hour
+	defaultNoHeartbeatProbeTTL = 24 * time.Hour
 )
 
 // KubernetesProbeStore implements the ProbeStorage interface using Kubernetes ConfigMaps.
 type KubernetesProbeStore struct {
-	Client           kubernetes.Interface
-	Namespace        string
-	StaleProbeTTL    time.Duration
-	UnlabeledProbeTTL time.Duration
+	Client             kubernetes.Interface
+	Namespace          string
+	StaleProbeTTL      time.Duration
+	NoHeartbeatProbeTTL time.Duration
 }
 
 // NewKubernetesProbeStore creates a new KubernetesProbeStore.
@@ -56,22 +57,22 @@ func NewKubernetesProbeStore(ctx context.Context, client kubernetes.Interface, n
 			log.Printf("Using custom PROBE_STALE_TTL: %s", staleTTL)
 		}
 	}
-	unlabeledTTL := defaultUnlabeledProbeTTL
+	noHeartbeatTTL := defaultNoHeartbeatProbeTTL
 	if v := os.Getenv("PROBE_UNLABELED_TTL"); v != "" {
 		parsed, err := time.ParseDuration(v)
 		if err != nil {
-			log.Printf("Warning: invalid PROBE_UNLABELED_TTL %q, using default %s: %v", v, defaultUnlabeledProbeTTL, err)
+			log.Printf("Warning: invalid PROBE_UNLABELED_TTL %q, using default %s: %v", v, defaultNoHeartbeatProbeTTL, err)
 		} else {
-			unlabeledTTL = parsed
-			log.Printf("Using custom PROBE_UNLABELED_TTL: %s", unlabeledTTL)
+			noHeartbeatTTL = parsed
+			log.Printf("Using custom PROBE_UNLABELED_TTL: %s", noHeartbeatTTL)
 		}
 	}
-	log.Printf("Initializing Kubernetes probe store in namespace %q (stale TTL: %s, unlabeled TTL: %s)", namespace, staleTTL, unlabeledTTL)
+	log.Printf("Initializing Kubernetes probe store in namespace %q (stale TTL: %s, no-heartbeat TTL: %s)", namespace, staleTTL, noHeartbeatTTL)
 	return &KubernetesProbeStore{
-		Client:           client,
-		Namespace:        namespace,
-		StaleProbeTTL:    staleTTL,
-		UnlabeledProbeTTL: unlabeledTTL,
+		Client:             client,
+		Namespace:          namespace,
+		StaleProbeTTL:      staleTTL,
+		NoHeartbeatProbeTTL: noHeartbeatTTL,
 	}, nil
 }
 
@@ -121,9 +122,14 @@ func (k *KubernetesProbeStore) CreateProbe(ctx context.Context, probe v1.ProbeOb
 
 	configMapName := fmt.Sprintf(probeConfigMapNameFormat, probe.Id)
 	cmLabels := make(map[string]string)
+	cmAnnotations := make(map[string]string)
 	if probe.Labels != nil {
 		for key, val := range *probe.Labels {
-			cmLabels[key] = val
+			if key == lastReconciledKey {
+				cmAnnotations[key] = val
+			} else {
+				cmLabels[key] = val
+			}
 		}
 	}
 	// Add our base app label from the constant
@@ -133,9 +139,10 @@ func (k *KubernetesProbeStore) CreateProbe(ctx context.Context, probe v1.ProbeOb
 
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      configMapName,
-			Namespace: k.Namespace,
-			Labels:    cmLabels,
+			Name:        configMapName,
+			Namespace:   k.Namespace,
+			Labels:      cmLabels,
+			Annotations: cmAnnotations,
 		},
 		Data: map[string]string{
 			"probe-config.json": string(payloadBytes),
@@ -170,15 +177,25 @@ func (k *KubernetesProbeStore) UpdateProbe(ctx context.Context, probe v1.ProbeOb
 	// Update the data
 	cm.Data["probe-config.json"] = string(payloadBytes)
 
-	// Update the labels, ensuring our base labels are preserved
+	// Update labels and annotations, ensuring base labels are preserved.
+	// last-reconciled goes to annotations to avoid Prometheus label churn.
 	if cm.Labels == nil {
 		cm.Labels = make(map[string]string)
 	}
+	if cm.Annotations == nil {
+		cm.Annotations = make(map[string]string)
+	}
 	if probe.Labels != nil {
 		for key, val := range *probe.Labels {
-			cm.Labels[key] = val
+			if key == lastReconciledKey {
+				cm.Annotations[key] = val
+			} else {
+				cm.Labels[key] = val
+			}
 		}
 	}
+	// Migrate: remove last-reconciled from labels if it was there before
+	delete(cm.Labels, lastReconciledKey)
 	cm.Labels[baseAppLabelKey] = baseAppLabelValue
 	cm.Labels[probeStatusLabelKey] = string(probe.Status)
 
@@ -307,7 +324,7 @@ func (k *KubernetesProbeStore) ProbeWithURLHashExists(ctx context.Context, urlHa
 
 // GarbageCollectStaleProbes deletes probe ConfigMaps that are orphaned:
 // 1. Probes with a last-reconciled timestamp older than StaleProbeTTL (default 15m)
-// 2. Probes without a last-reconciled label that are older than 24 hours
+// 2. Probes without a last-reconciled heartbeat that are older than NoHeartbeatProbeTTL
 //
 // Case 1 catches probes for deleted clusters (RMO stops reconciling).
 // Case 2 catches probes from non-RHOBS-enabled sectors that never get heartbeats.
@@ -324,16 +341,20 @@ func (k *KubernetesProbeStore) GarbageCollectStaleProbes(ctx context.Context) (i
 	deleted := 0
 
 	for _, cm := range configMaps.Items {
-		lastReconciledStr, ok := cm.Labels[lastReconciledLabelKey]
+		// Check annotations first (current), fall back to labels (pre-migration)
+		lastReconciledStr, ok := cm.Annotations[lastReconciledKey]
 		if !ok {
-			// No last-reconciled label -- check if the probe is old enough
+			lastReconciledStr, ok = cm.Labels[lastReconciledKey]
+		}
+		if !ok {
+			// No heartbeat at all -- check if the probe is old enough
 			// to be considered abandoned (e.g., from a non-RHOBS-enabled sector
 			// that will never get heartbeats).
-			if !cm.CreationTimestamp.IsZero() && now.Sub(cm.CreationTimestamp.Time) > k.UnlabeledProbeTTL {
-				log.Printf("GC: deleting unlabeled probe configmap %s (created: %s, age: %s, no heartbeat ever received)",
+			if !cm.CreationTimestamp.IsZero() && now.Sub(cm.CreationTimestamp.Time) > k.NoHeartbeatProbeTTL {
+				log.Printf("GC: deleting no-heartbeat probe configmap %s (created: %s, age: %s, no heartbeat ever received)",
 					cm.Name, cm.CreationTimestamp.Format("20060102T150405Z"), now.Sub(cm.CreationTimestamp.Time).Round(time.Second))
 				if err := k.Client.CoreV1().ConfigMaps(k.Namespace).Delete(ctx, cm.Name, metav1.DeleteOptions{}); err != nil {
-					log.Printf("GC: failed to delete unlabeled probe configmap %s: %v", cm.Name, err)
+					log.Printf("GC: failed to delete no-heartbeat probe configmap %s: %v", cm.Name, err)
 					continue
 				}
 				deleted++
@@ -343,7 +364,7 @@ func (k *KubernetesProbeStore) GarbageCollectStaleProbes(ctx context.Context) (i
 
 		lastReconciled, err := time.Parse("20060102T150405Z", lastReconciledStr)
 		if err != nil {
-			log.Printf("GC: could not parse last-reconciled label %q on configmap %s, skipping: %v", lastReconciledStr, cm.Name, err)
+			log.Printf("GC: could not parse last-reconciled %q on configmap %s, skipping: %v", lastReconciledStr, cm.Name, err)
 			continue
 		}
 
