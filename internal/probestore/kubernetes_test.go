@@ -683,14 +683,14 @@ func TestKubernetesProbeStore_GarbageCollectStaleProbes(t *testing.T) {
 			expectRemaining: 1,
 		},
 		{
-			name: "stale probe is deleted",
+			name: "stale probe is transitioned to terminating",
 			configMaps: []*corev1.ConfigMap{
 				makeProbeConfigMap("probe-stale", testNamespace, map[string]string{
 					lastReconciledKey: stale,
 				}),
 			},
 			expectDeleted:   1,
-			expectRemaining: 0,
+			expectRemaining: 1,
 		},
 		{
 			name: "probe without last-reconciled label is skipped",
@@ -728,15 +728,15 @@ func TestKubernetesProbeStore_GarbageCollectStaleProbes(t *testing.T) {
 				}),
 			},
 			expectDeleted:   2,
-			expectRemaining: 3,
+			expectRemaining: 5,
 		},
 		{
-			name: "no-heartbeat probe older than 24h is deleted",
+			name: "no-heartbeat probe older than 24h is transitioned to terminating",
 			configMaps: []*corev1.ConfigMap{
 				makeProbeConfigMapWithAge("probe-old-no-heartbeat", testNamespace, map[string]string{}, time.Now().UTC().Add(-48*time.Hour)),
 			},
 			expectDeleted:   1,
-			expectRemaining: 0,
+			expectRemaining: 1,
 		},
 		{
 			name: "no-heartbeat probe younger than 24h is kept",
@@ -803,7 +803,7 @@ func TestKubernetesProbeStore_GarbageCollectStaleProbes_ListError(t *testing.T) 
 	assert.Contains(t, err.Error(), "failed to list probe configmaps for GC")
 }
 
-func TestKubernetesProbeStore_GarbageCollectStaleProbes_DeleteError(t *testing.T) {
+func TestKubernetesProbeStore_GarbageCollectStaleProbes_UpdateError(t *testing.T) {
 	ctx := context.Background()
 	stale := time.Now().UTC().Add(-2 * time.Hour).Format("20060102T150405Z")
 
@@ -812,7 +812,7 @@ func TestKubernetesProbeStore_GarbageCollectStaleProbes_DeleteError(t *testing.T
 	})
 
 	client := fake.NewSimpleClientset(cm)
-	client.PrependReactor("delete", "configmaps", func(action k8stesting.Action) (bool, runtime.Object, error) {
+	client.PrependReactor("update", "configmaps", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		return true, nil, errors.New("permission denied")
 	})
 
@@ -822,10 +822,10 @@ func TestKubernetesProbeStore_GarbageCollectStaleProbes_DeleteError(t *testing.T
 	}
 
 	deleted, err := store.GarbageCollectStaleProbes(ctx)
-	require.NoError(t, err) // delete errors are logged but don't fail the GC run
+	require.NoError(t, err) // update errors are logged but don't fail the GC run
 	assert.Equal(t, 0, deleted)
 
-	// Probe should still exist since delete failed
+	// Probe should still exist since update failed
 	remaining, err := client.CoreV1().ConfigMaps(testNamespace).List(ctx, metav1.ListOptions{
 		LabelSelector: fmt.Sprintf("%s=%s", baseAppLabelKey, baseAppLabelValue),
 	})
