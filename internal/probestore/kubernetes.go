@@ -351,10 +351,8 @@ func (k *KubernetesProbeStore) GarbageCollectStaleProbes(ctx context.Context) (i
 			// to be considered abandoned (e.g., from a non-RHOBS-enabled sector
 			// that will never get heartbeats).
 			if !cm.CreationTimestamp.IsZero() && now.Sub(cm.CreationTimestamp.Time) > k.NoHeartbeatProbeTTL {
-				log.Printf("GC: deleting no-heartbeat probe configmap %s (created: %s, age: %s, no heartbeat ever received)",
-					cm.Name, cm.CreationTimestamp.Format("20060102T150405Z"), now.Sub(cm.CreationTimestamp.Time).Round(time.Second))
-				if err := k.Client.CoreV1().ConfigMaps(k.Namespace).Delete(ctx, cm.Name, metav1.DeleteOptions{}); err != nil {
-					log.Printf("GC: failed to delete no-heartbeat probe configmap %s: %v", cm.Name, err)
+				if err := k.transitionToTerminating(ctx, &cm, "no heartbeat ever received"); err != nil {
+					log.Printf("GC: failed to transition no-heartbeat probe %s to terminating: %v", cm.Name, err)
 					continue
 				}
 				deleted++
@@ -372,15 +370,35 @@ func (k *KubernetesProbeStore) GarbageCollectStaleProbes(ctx context.Context) (i
 			continue // still fresh
 		}
 
-		// Probe is stale, delete it
-		log.Printf("GC: deleting stale probe configmap %s (last-reconciled: %s, age: %s)", cm.Name, lastReconciledStr, now.Sub(lastReconciled).Round(time.Second))
-		err = k.Client.CoreV1().ConfigMaps(k.Namespace).Delete(ctx, cm.Name, metav1.DeleteOptions{})
-		if err != nil {
-			log.Printf("GC: failed to delete stale probe configmap %s: %v", cm.Name, err)
+		// Probe is stale -- transition to terminating so the agent can clean up the Probe CR
+		if err := k.transitionToTerminating(ctx, &cm, fmt.Sprintf("stale heartbeat %s", lastReconciledStr)); err != nil {
+			log.Printf("GC: failed to transition stale probe %s to terminating: %v", cm.Name, err)
 			continue
 		}
 		deleted++
 	}
 
 	return deleted, nil
+}
+
+// transitionToTerminating sets a probe's status to terminating instead of deleting
+// it directly. This allows the synthetics-agent to see the terminating probe and
+// clean up the corresponding Probe CR on the backplane/cell before the probe is
+// fully removed from the API.
+func (k *KubernetesProbeStore) transitionToTerminating(ctx context.Context, cm *corev1.ConfigMap, reason string) error {
+	currentStatus := cm.Labels[probeStatusLabelKey]
+	if currentStatus == string(v1.Terminating) {
+		// Already terminating -- delete it (agent had its chance)
+		log.Printf("GC: deleting already-terminating probe %s (%s)", cm.Name, reason)
+		return k.Client.CoreV1().ConfigMaps(k.Namespace).Delete(ctx, cm.Name, metav1.DeleteOptions{})
+	}
+
+	// Transition to terminating
+	cm.Labels[probeStatusLabelKey] = string(v1.Terminating)
+	_, err := k.Client.CoreV1().ConfigMaps(k.Namespace).Update(ctx, cm, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update status to terminating: %w", err)
+	}
+	log.Printf("GC: transitioned probe %s to terminating (%s)", cm.Name, reason)
+	return nil
 }
