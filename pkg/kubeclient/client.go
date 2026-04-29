@@ -41,6 +41,9 @@ func NewClient(cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("failed to create kubernetes dynamic client: %w", err)
 	}
 
+	config.QPS = 100
+	config.Burst = 100
+
 	return &Client{
 		config:        config,
 		clientset:     clientset,
