@@ -12,7 +12,11 @@ import (
 	v1 "github.com/rhobs/rhobs-synthetics-api/pkg/apis/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	listersv1 "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
 )
 
 const (
@@ -35,17 +39,18 @@ const (
 )
 
 // KubernetesProbeStore implements the ProbeStorage interface using Kubernetes ConfigMaps.
+// Reads are served from an in-memory informer cache; only writes hit the API server.
 type KubernetesProbeStore struct {
-	Client             kubernetes.Interface
-	Namespace          string
-	StaleProbeTTL      time.Duration
+	Client              kubernetes.Interface
+	Namespace           string
+	StaleProbeTTL       time.Duration
 	NoHeartbeatProbeTTL time.Duration
+	lister              listersv1.ConfigMapNamespaceLister
 }
 
-// NewKubernetesProbeStore creates a new KubernetesProbeStore.
-// The namespace existence is not checked here; it is assumed to exist.
-// RBAC permissions for the service account only allow for namespaced resource access,
-// so a cluster-level check for a namespace is not possible and also redundant.
+// NewKubernetesProbeStore creates a new KubernetesProbeStore backed by an informer cache.
+// It starts a SharedInformer for probe ConfigMaps and waits for the initial cache sync
+// before returning. ctx controls the informer's lifetime and the sync timeout.
 func NewKubernetesProbeStore(ctx context.Context, client kubernetes.Interface, namespace string) (*KubernetesProbeStore, error) {
 	staleTTL := defaultStaleProbeTTL
 	if v := os.Getenv("PROBE_STALE_TTL"); v != "" {
@@ -67,31 +72,60 @@ func NewKubernetesProbeStore(ctx context.Context, client kubernetes.Interface, n
 			log.Printf("Using custom PROBE_UNLABELED_TTL: %s", noHeartbeatTTL)
 		}
 	}
+
+	factory := informers.NewSharedInformerFactoryWithOptions(
+		client,
+		0,
+		informers.WithNamespace(namespace),
+		informers.WithTweakListOptions(func(opts *metav1.ListOptions) {
+			opts.LabelSelector = fmt.Sprintf("%s=%s", baseAppLabelKey, baseAppLabelValue)
+		}),
+	)
+
+	cmInformer := factory.Core().V1().ConfigMaps()
+	factory.Start(ctx.Done())
+
+	syncCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if !cache.WaitForCacheSync(syncCtx.Done(), cmInformer.Informer().HasSynced) {
+		return nil, fmt.Errorf("timed out waiting for configmap cache to sync")
+	}
+
 	log.Printf("Initializing Kubernetes probe store in namespace %q (stale TTL: %s, no-heartbeat TTL: %s)", namespace, staleTTL, noHeartbeatTTL)
 	return &KubernetesProbeStore{
-		Client:             client,
-		Namespace:          namespace,
-		StaleProbeTTL:      staleTTL,
+		Client:              client,
+		Namespace:           namespace,
+		StaleProbeTTL:       staleTTL,
 		NoHeartbeatProbeTTL: noHeartbeatTTL,
+		lister:              cmInformer.Lister().ConfigMaps(namespace),
 	}, nil
 }
 
 func (k *KubernetesProbeStore) ListProbes(ctx context.Context, selector string) ([]v1.ProbeObject, error) {
-	configMaps, err := k.Client.CoreV1().ConfigMaps(k.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: selector,
-	})
+	var labelSelector labels.Selector
+	if selector != "" {
+		parsed, err := labels.Parse(selector)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse label selector: %w", err)
+		}
+		labelSelector = parsed
+	} else {
+		labelSelector = labels.Everything()
+	}
+
+	cms, err := k.lister.List(labelSelector)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list config maps: %w", err)
+		return nil, fmt.Errorf("failed to list configmaps from cache: %w", err)
 	}
 
 	probes := []v1.ProbeObject{}
-	for _, cm := range configMaps.Items {
+	for _, cm := range cms {
 		probe := v1.ProbeObject{}
 		if probeData, ok := cm.Data["probe-config.json"]; ok {
 			err := json.Unmarshal([]byte(probeData), &probe)
 			if err != nil {
 				log.Printf("Error unmarshaling probe from configmap %s: %v", cm.Name, err)
-				continue // Or handle error more gracefully
+				continue
 			}
 			probes = append(probes, probe)
 		}
@@ -101,9 +135,9 @@ func (k *KubernetesProbeStore) ListProbes(ctx context.Context, selector string) 
 
 func (k *KubernetesProbeStore) GetProbe(ctx context.Context, probeID uuid.UUID) (*v1.ProbeObject, error) {
 	configMapName := fmt.Sprintf(probeConfigMapNameFormat, probeID)
-	cm, err := k.Client.CoreV1().ConfigMaps(k.Namespace).Get(ctx, configMapName, metav1.GetOptions{})
+	cm, err := k.lister.Get(configMapName)
 	if err != nil {
-		return nil, err // Pass the error up, including not found errors
+		return nil, err
 	}
 
 	probe := &v1.ProbeObject{}
@@ -162,11 +196,12 @@ func (k *KubernetesProbeStore) CreateProbe(ctx context.Context, probe v1.ProbeOb
 func (k *KubernetesProbeStore) UpdateProbe(ctx context.Context, probe v1.ProbeObject) (*v1.ProbeObject, error) {
 	configMapName := fmt.Sprintf(probeConfigMapNameFormat, probe.Id)
 
-	// We need to fetch the existing ConfigMap to get its resource version for the update.
-	cm, err := k.Client.CoreV1().ConfigMaps(k.Namespace).Get(ctx, configMapName, metav1.GetOptions{})
+	// Read from cache — resourceVersion is present so the API server can enforce optimistic concurrency.
+	cm, err := k.lister.Get(configMapName)
 	if err != nil {
-		return nil, err // Let the caller handle not found errors
+		return nil, err
 	}
+	cm = cm.DeepCopy()
 
 	// Marshal the updated probe object
 	payloadBytes, err := json.Marshal(probe)
@@ -218,11 +253,11 @@ func (k *KubernetesProbeStore) UpdateProbe(ctx context.Context, probe v1.ProbeOb
 func (k *KubernetesProbeStore) DeleteProbe(ctx context.Context, probeID uuid.UUID) error {
 	configMapName := fmt.Sprintf(probeConfigMapNameFormat, probeID)
 
-	// Get the existing ConfigMap to check its current status
-	cm, err := k.Client.CoreV1().ConfigMaps(k.Namespace).Get(ctx, configMapName, metav1.GetOptions{})
+	cm, err := k.lister.Get(configMapName)
 	if err != nil {
-		return err // Pass the error up, including not found errors
+		return err
 	}
+	cm = cm.DeepCopy()
 
 	// Unmarshal the existing probe object to check its status
 	probe := &v1.ProbeObject{}
@@ -304,16 +339,19 @@ func (k *KubernetesProbeStore) DeleteProbeStorage(ctx context.Context, probeID u
 }
 
 func (k *KubernetesProbeStore) ProbeWithURLHashExists(ctx context.Context, urlHashString string) (bool, error) {
-	hashLabelSelector := fmt.Sprintf("%s=%s", probeURLHashLabelKey, urlHashString)
-	existingProbes, err := k.Client.CoreV1().ConfigMaps(k.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: hashLabelSelector,
-	})
+	selector, err := labels.Parse(fmt.Sprintf("%s=%s", probeURLHashLabelKey, urlHashString))
+	if err != nil {
+		return false, fmt.Errorf("failed to parse label selector: %w", err)
+	}
+
+	cms, err := k.lister.List(selector)
 	if err != nil {
 		return false, fmt.Errorf("failed to check for existing probes: %w", err)
 	}
+
 	// Exclude probes in terminating or failed status -- these are effectively
 	// inactive and should not block creation of a new probe for the same URL.
-	for _, cm := range existingProbes.Items {
+	for _, cm := range cms {
 		status := cm.Labels[probeStatusLabelKey]
 		if status != string(v1.Terminating) && status != string(v1.Failed) {
 			return true, nil
@@ -329,10 +367,7 @@ func (k *KubernetesProbeStore) ProbeWithURLHashExists(ctx context.Context, urlHa
 // Case 1 catches probes for deleted clusters (RMO stops reconciling).
 // Case 2 catches probes from non-RHOBS-enabled sectors that never get heartbeats.
 func (k *KubernetesProbeStore) GarbageCollectStaleProbes(ctx context.Context) (int, error) {
-	selector := fmt.Sprintf("%s=%s", baseAppLabelKey, baseAppLabelValue)
-	configMaps, err := k.Client.CoreV1().ConfigMaps(k.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: selector,
-	})
+	cms, err := k.lister.List(labels.Everything())
 	if err != nil {
 		return 0, fmt.Errorf("failed to list probe configmaps for GC: %w", err)
 	}
@@ -340,7 +375,7 @@ func (k *KubernetesProbeStore) GarbageCollectStaleProbes(ctx context.Context) (i
 	now := time.Now().UTC()
 	deleted := 0
 
-	for _, cm := range configMaps.Items {
+	for _, cm := range cms {
 		// Check annotations first (current), fall back to labels (pre-migration)
 		lastReconciledStr, ok := cm.Annotations[lastReconciledKey]
 		if !ok {
@@ -351,7 +386,7 @@ func (k *KubernetesProbeStore) GarbageCollectStaleProbes(ctx context.Context) (i
 			// to be considered abandoned (e.g., from a non-RHOBS-enabled sector
 			// that will never get heartbeats).
 			if !cm.CreationTimestamp.IsZero() && now.Sub(cm.CreationTimestamp.Time) > k.NoHeartbeatProbeTTL {
-				if err := k.transitionToTerminating(ctx, &cm, "no heartbeat ever received"); err != nil {
+				if err := k.transitionToTerminating(ctx, cm.DeepCopy(), "no heartbeat ever received"); err != nil {
 					log.Printf("GC: failed to transition no-heartbeat probe %s to terminating: %v", cm.Name, err)
 					continue
 				}
@@ -371,7 +406,7 @@ func (k *KubernetesProbeStore) GarbageCollectStaleProbes(ctx context.Context) (i
 		}
 
 		// Probe is stale -- transition to terminating so the agent can clean up the Probe CR
-		if err := k.transitionToTerminating(ctx, &cm, fmt.Sprintf("stale heartbeat %s", lastReconciledStr)); err != nil {
+		if err := k.transitionToTerminating(ctx, cm.DeepCopy(), fmt.Sprintf("stale heartbeat %s", lastReconciledStr)); err != nil {
 			log.Printf("GC: failed to transition stale probe %s to terminating: %v", cm.Name, err)
 			continue
 		}
