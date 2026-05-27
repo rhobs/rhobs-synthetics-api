@@ -40,7 +40,7 @@ require (
 	github.com/go-openapi/swag/stringutils v0.25.1 // indirect
 	github.com/go-openapi/swag/typeutils v0.25.1 // indirect
 	github.com/go-openapi/swag/yamlutils v0.25.1 // indirect
-	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
+	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect
 	github.com/gorilla/mux v1.8.1 // indirect
