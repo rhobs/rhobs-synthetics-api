@@ -38,7 +38,7 @@ generate: ensure-oapi-codegen
 	@mkdir -p pkg/client # Ensure pkg/client directory exists
 	$(GOENV) go generate -v ./...
 
-GOLANGCI_LINT_VERSION ?= v2.0.2
+GOLANGCI_LINT_VERSION ?= v2.12.2
 # Extract first component of GOPATH (in case it has multiple colon-separated paths)
 GOLANGCI_LINT_BIN := $(shell echo $$(go env GOPATH) | cut -d: -f1)/bin/golangci-lint
 
@@ -55,7 +55,7 @@ $(GOLANGCI_LINT_BIN):
 	@echo "Checking for golangci-lint..."
 	@if [ ! -f "$@" ]; then \
 		echo "golangci-lint not found. Installing $(GOLANGCI_LINT_VERSION)..."; \
-		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(dir $@) $(GOLANGCI_LINT_VERSION); \
+		curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b $(dir $@) $(GOLANGCI_LINT_VERSION); \
 	else \
 		echo "golangci-lint already installed."; \
 	fi
