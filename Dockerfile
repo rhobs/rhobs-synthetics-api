@@ -1,6 +1,7 @@
 # Use the official Golang image to create a build artifact.
 # This is a multi-stage build, so we'll use a temporary image for the build process.
-FROM quay.io/redhat-services-prod/openshift/boilerplate:image-v8.3.6 AS builder
+# When bumping the tag, also update the value in the .ci-operator.yaml file.
+FROM quay.io/redhat-services-prod/openshift/boilerplate:image-v8.4.1 AS builder
 
 # Set the Current Working Directory inside the container
 WORKDIR /app
