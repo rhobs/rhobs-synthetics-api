@@ -3,7 +3,7 @@ module github.com/rhobs/rhobs-synthetics-api
 go 1.26.0
 
 require (
-	github.com/getkin/kin-openapi v0.141.0
+	github.com/getkin/kin-openapi v0.142.0
 	github.com/google/uuid v1.6.0
 	github.com/oapi-codegen/nethttp-middleware v1.1.2
 	github.com/oapi-codegen/runtime v1.4.2
