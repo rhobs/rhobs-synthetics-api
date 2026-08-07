@@ -17,17 +17,41 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	listersv1 "k8s.io/client-go/listers/core/v1"
 	k8stesting "k8s.io/client-go/testing"
+	"k8s.io/client-go/tools/cache"
 )
 
 const (
 	testNamespace = "test-namespace"
 )
 
-func mustMarshal(t *testing.T, v interface{}) string {
+func mustMarshal(t *testing.T, v any) string {
 	bytes, err := json.Marshal(v)
 	require.NoError(t, err)
 	return string(bytes)
+}
+
+// newTestLister builds an in-memory lister pre-populated with the given ConfigMaps.
+func newTestLister(namespace string, cms ...*corev1.ConfigMap) listersv1.ConfigMapNamespaceLister {
+	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	for _, cm := range cms {
+		_ = indexer.Add(cm)
+	}
+	return listersv1.NewConfigMapLister(indexer).ConfigMaps(namespace)
+}
+
+// newTestStore creates a KubernetesProbeStore with an injected in-memory lister.
+// The fake clientset is used only for write operations (Create/Update/Delete).
+func newTestStore(t *testing.T, clientset *fake.Clientset, cms ...*corev1.ConfigMap) *KubernetesProbeStore {
+	t.Helper()
+	return &KubernetesProbeStore{
+		Client:              clientset,
+		Namespace:           testNamespace,
+		StaleProbeTTL:       defaultStaleProbeTTL,
+		NoHeartbeatProbeTTL: defaultNoHeartbeatProbeTTL,
+		lister:              newTestLister(testNamespace, cms...),
+	}
 }
 
 func TestKubernetesProbeStore_ListProbes(t *testing.T) {
@@ -64,59 +88,46 @@ func TestKubernetesProbeStore_ListProbes(t *testing.T) {
 		Data: map[string]string{"probe-config.json": "{not-a-valid-json"},
 	}
 
-	errorClientset := fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}})
-	errorClientset.PrependReactor("list", "configmaps", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
-		return true, nil, errors.New("simulated API error")
-	})
-
 	testCases := []struct {
 		name                string
 		selector            string
-		clientset           *fake.Clientset
+		cms                 []*corev1.ConfigMap
 		expectErr           bool
 		expectedProbesCount int
 	}{
 		{
 			name:                "list multiple probes",
 			selector:            fmt.Sprintf("%s=%s", baseAppLabelKey, baseAppLabelValue),
-			clientset:           fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, cm1, cm2),
+			cms:                 []*corev1.ConfigMap{cm1, cm2},
 			expectErr:           false,
 			expectedProbesCount: 2,
 		},
 		{
 			name:                "list no probes",
 			selector:            fmt.Sprintf("%s=%s", baseAppLabelKey, baseAppLabelValue),
-			clientset:           fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}),
+			cms:                 nil,
 			expectErr:           false,
 			expectedProbesCount: 0,
 		},
 		{
 			name:                "filter with label selector",
 			selector:            fmt.Sprintf("%s=%s,env=prod", baseAppLabelKey, baseAppLabelValue),
-			clientset:           fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, cm1, cm2),
+			cms:                 []*corev1.ConfigMap{cm1, cm2},
 			expectErr:           false,
 			expectedProbesCount: 1,
 		},
 		{
 			name:                "skip malformed probe",
 			selector:            fmt.Sprintf("%s=%s", baseAppLabelKey, baseAppLabelValue),
-			clientset:           fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, cm1, malformedCm),
+			cms:                 []*corev1.ConfigMap{cm1, malformedCm},
 			expectErr:           false,
 			expectedProbesCount: 1,
-		},
-		{
-			name:                "kubernetes api error",
-			selector:            fmt.Sprintf("%s=%s", baseAppLabelKey, baseAppLabelValue),
-			clientset:           errorClientset,
-			expectErr:           true,
-			expectedProbesCount: 0,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			store, err := NewKubernetesProbeStore(ctx, tc.clientset, testNamespace)
-			require.NoError(t, err)
+			store := newTestStore(t, fake.NewSimpleClientset(), tc.cms...)
 
 			probes, err := store.ListProbes(ctx, tc.selector)
 
@@ -128,6 +139,22 @@ func TestKubernetesProbeStore_ListProbes(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestNewKubernetesProbeStore_SyncError verifies that NewKubernetesProbeStore returns
+// an error when the Kubernetes API is unavailable and the cache cannot sync.
+func TestNewKubernetesProbeStore_SyncError(t *testing.T) {
+	errorClientset := fake.NewSimpleClientset()
+	errorClientset.PrependReactor("list", "configmaps", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+		return true, nil, errors.New("simulated API error")
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	_, err := NewKubernetesProbeStore(ctx, errorClientset, testNamespace)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timed out waiting for configmap cache to sync")
 }
 
 func TestKubernetesProbeStore_GetProbe(t *testing.T) {
@@ -157,21 +184,21 @@ func TestKubernetesProbeStore_GetProbe(t *testing.T) {
 	testCases := []struct {
 		name          string
 		probeID       uuid.UUID
-		clientset     *fake.Clientset
+		cms           []*corev1.ConfigMap
 		expectErr     bool
 		expectedProbe *v1.ProbeObject
 		checkErr      func(t *testing.T, err error)
 	}{
 		{
 			name:          "get existing probe",
-			clientset:     fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, cm),
+			cms:           []*corev1.ConfigMap{cm},
 			probeID:       probeID,
 			expectErr:     false,
 			expectedProbe: &probe,
 		},
 		{
 			name:      "get non-existent probe",
-			clientset: fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}),
+			cms:       nil,
 			probeID:   uuid.New(),
 			expectErr: true,
 			checkErr: func(t *testing.T, err error) {
@@ -180,7 +207,7 @@ func TestKubernetesProbeStore_GetProbe(t *testing.T) {
 		},
 		{
 			name:      "error getting malformed probe",
-			clientset: fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, malformedCm),
+			cms:       []*corev1.ConfigMap{malformedCm},
 			probeID:   malformedCmID,
 			expectErr: true,
 			checkErr: func(t *testing.T, err error) {
@@ -191,8 +218,7 @@ func TestKubernetesProbeStore_GetProbe(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			store, err := NewKubernetesProbeStore(ctx, tc.clientset, testNamespace)
-			require.NoError(t, err)
+			store := newTestStore(t, fake.NewSimpleClientset(), tc.cms...)
 
 			returnedProbe, err := store.GetProbe(ctx, tc.probeID)
 
@@ -219,9 +245,9 @@ func TestKubernetesProbeStore_CreateProbe(t *testing.T) {
 	}
 	urlHash := "testhash"
 
-	successClientset := fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}})
+	successClientset := fake.NewSimpleClientset()
 
-	alreadyExistsClientset := fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}})
+	alreadyExistsClientset := fake.NewSimpleClientset()
 	alreadyExistsClientset.PrependReactor("create", "configmaps", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
 		return true, nil, k8serrors.NewAlreadyExists(corev1.Resource("configmaps"), "probe-already-exists")
 	})
@@ -265,8 +291,7 @@ func TestKubernetesProbeStore_CreateProbe(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			store, err := NewKubernetesProbeStore(ctx, tc.clientset, testNamespace)
-			require.NoError(t, err)
+			store := newTestStore(t, tc.clientset)
 
 			createdProbe, err := store.CreateProbe(ctx, probeToCreate, urlHash)
 
@@ -313,6 +338,7 @@ func TestKubernetesProbeStore_UpdateProbe(t *testing.T) {
 		name          string
 		probeToUpdate v1.ProbeObject
 		clientset     *fake.Clientset
+		cms           []*corev1.ConfigMap
 		expectErr     bool
 		postCheck     func(t *testing.T, cs *fake.Clientset)
 	}{
@@ -324,7 +350,8 @@ func TestKubernetesProbeStore_UpdateProbe(t *testing.T) {
 				p.Labels = &v1.LabelsSchema{"new": "label"}
 				return p
 			}(),
-			clientset: fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, initialConfigMap),
+			clientset: fake.NewSimpleClientset(initialConfigMap),
+			cms:       []*corev1.ConfigMap{initialConfigMap},
 			expectErr: false,
 			postCheck: func(t *testing.T, cs *fake.Clientset) {
 				cm, err := cs.CoreV1().ConfigMaps(testNamespace).Get(ctx, fmt.Sprintf(probeConfigMapNameFormat, probeID), metav1.GetOptions{})
@@ -336,21 +363,18 @@ func TestKubernetesProbeStore_UpdateProbe(t *testing.T) {
 		{
 			name:          "error updating non-existent probe",
 			probeToUpdate: v1.ProbeObject{Id: uuid.New()},
-			clientset:     fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, initialConfigMap),
+			clientset:     fake.NewSimpleClientset(initialConfigMap),
+			cms:           []*corev1.ConfigMap{initialConfigMap},
 			expectErr:     true,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Arrange
-			store, err := NewKubernetesProbeStore(ctx, tc.clientset, testNamespace)
-			require.NoError(t, err)
+			store := newTestStore(t, tc.clientset, tc.cms...)
 
-			// Act
 			updatedProbe, err := store.UpdateProbe(ctx, tc.probeToUpdate)
 
-			// Assert
 			if tc.expectErr {
 				require.Error(t, err)
 			} else {
@@ -365,10 +389,9 @@ func TestKubernetesProbeStore_UpdateProbe(t *testing.T) {
 	}
 }
 
-
 func TestKubernetesProbeStore_DeleteProbe(t *testing.T) {
 	ctx := context.Background()
-	
+
 	// Test data for different probe states
 	probeIDActive := uuid.New()
 	probeActive := v1.ProbeObject{Id: probeIDActive, StaticUrl: "http://example.com/active", Status: v1.Active, Labels: &v1.LabelsSchema{"env": "prod"}}
@@ -418,6 +441,7 @@ func TestKubernetesProbeStore_DeleteProbe(t *testing.T) {
 		name      string
 		probeID   uuid.UUID
 		clientset *fake.Clientset
+		cms       []*corev1.ConfigMap
 		expectErr bool
 		postCheck func(t *testing.T, cs *fake.Clientset, probeID uuid.UUID)
 		checkErr  func(t *testing.T, err error)
@@ -425,29 +449,27 @@ func TestKubernetesProbeStore_DeleteProbe(t *testing.T) {
 		{
 			name:      "successfully sets active probe status to terminating",
 			probeID:   probeIDActive,
-			clientset: fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, cmActive),
+			clientset: fake.NewSimpleClientset(cmActive),
+			cms:       []*corev1.ConfigMap{cmActive},
 			expectErr: false,
 			postCheck: func(t *testing.T, cs *fake.Clientset, probeID uuid.UUID) {
 				updatedCM, err := cs.CoreV1().ConfigMaps(testNamespace).Get(ctx, fmt.Sprintf(probeConfigMapNameFormat, probeID), metav1.GetOptions{})
 				require.NoError(t, err, "ConfigMap should still exist for active probe")
 
-				// Check that the probe status was updated to terminating
 				var updatedProbe v1.ProbeObject
 				err = json.Unmarshal([]byte(updatedCM.Data["probe-config.json"]), &updatedProbe)
 				require.NoError(t, err)
 				assert.Equal(t, v1.Terminating, updatedProbe.Status)
-
-				// Check that the status label was updated
 				assert.Equal(t, string(v1.Terminating), updatedCM.Labels[probeStatusLabelKey])
 			},
 		},
 		{
 			name:      "successfully deletes pending probe immediately",
 			probeID:   probeIDPending,
-			clientset: fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, cmPending),
+			clientset: fake.NewSimpleClientset(cmPending),
+			cms:       []*corev1.ConfigMap{cmPending},
 			expectErr: false,
 			postCheck: func(t *testing.T, cs *fake.Clientset, probeID uuid.UUID) {
-				// Probe should be completely deleted (ConfigMap gone)
 				_, err := cs.CoreV1().ConfigMaps(testNamespace).Get(ctx, fmt.Sprintf(probeConfigMapNameFormat, probeID), metav1.GetOptions{})
 				require.Error(t, err)
 				assert.True(t, k8serrors.IsNotFound(err), "expected a 'not found' error for pending probe")
@@ -456,10 +478,10 @@ func TestKubernetesProbeStore_DeleteProbe(t *testing.T) {
 		{
 			name:      "successfully deletes failed probe immediately",
 			probeID:   probeIDFailed,
-			clientset: fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, cmFailed),
+			clientset: fake.NewSimpleClientset(cmFailed),
+			cms:       []*corev1.ConfigMap{cmFailed},
 			expectErr: false,
 			postCheck: func(t *testing.T, cs *fake.Clientset, probeID uuid.UUID) {
-				// Probe should be completely deleted (ConfigMap gone)
 				_, err := cs.CoreV1().ConfigMaps(testNamespace).Get(ctx, fmt.Sprintf(probeConfigMapNameFormat, probeID), metav1.GetOptions{})
 				require.Error(t, err)
 				assert.True(t, k8serrors.IsNotFound(err), "expected a 'not found' error for failed probe")
@@ -468,10 +490,10 @@ func TestKubernetesProbeStore_DeleteProbe(t *testing.T) {
 		{
 			name:      "handles already terminating probe gracefully",
 			probeID:   probeIDTerminating,
-			clientset: fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, cmTerminating),
+			clientset: fake.NewSimpleClientset(cmTerminating),
+			cms:       []*corev1.ConfigMap{cmTerminating},
 			expectErr: false,
 			postCheck: func(t *testing.T, cs *fake.Clientset, probeID uuid.UUID) {
-				// Probe should still exist and remain in terminating state
 				updatedCM, err := cs.CoreV1().ConfigMaps(testNamespace).Get(ctx, fmt.Sprintf(probeConfigMapNameFormat, probeID), metav1.GetOptions{})
 				require.NoError(t, err, "ConfigMap should still exist for terminating probe")
 
@@ -484,7 +506,8 @@ func TestKubernetesProbeStore_DeleteProbe(t *testing.T) {
 		{
 			name:      "error deleting non-existent probe",
 			probeID:   uuid.New(),
-			clientset: fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}),
+			clientset: fake.NewSimpleClientset(),
+			cms:       nil,
 			expectErr: true,
 			checkErr: func(t *testing.T, err error) {
 				assert.True(t, k8serrors.IsNotFound(err), "expected a 'not found' error")
@@ -494,10 +517,9 @@ func TestKubernetesProbeStore_DeleteProbe(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			store, err := NewKubernetesProbeStore(ctx, tc.clientset, testNamespace)
-			require.NoError(t, err)
+			store := newTestStore(t, tc.clientset, tc.cms...)
 
-			err = store.DeleteProbe(ctx, tc.probeID)
+			err := store.DeleteProbe(ctx, tc.probeID)
 
 			if tc.expectErr {
 				require.Error(t, err)
@@ -526,7 +548,6 @@ func TestKubernetesProbeStore_ProbeWithURLHashExists(t *testing.T) {
 		Labels:    &v1.LabelsSchema{"env": "test"},
 	}
 
-	// ConfigMap with the URL hash we're looking for
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf(probeConfigMapNameFormat, probeID),
@@ -543,35 +564,35 @@ func TestKubernetesProbeStore_ProbeWithURLHashExists(t *testing.T) {
 	testCases := []struct {
 		name         string
 		urlHash      string
-		clientset    *fake.Clientset
+		cms          []*corev1.ConfigMap
 		expectExists bool
 		expectErr    bool
 	}{
 		{
 			name:         "probe with URL hash exists",
 			urlHash:      urlHash,
-			clientset:    fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, cm),
+			cms:          []*corev1.ConfigMap{cm},
 			expectExists: true,
 			expectErr:    false,
 		},
 		{
 			name:         "probe with URL hash does not exist",
 			urlHash:      "different-hash",
-			clientset:    fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, cm),
+			cms:          []*corev1.ConfigMap{cm},
 			expectExists: false,
 			expectErr:    false,
 		},
 		{
 			name:         "no probes exist",
 			urlHash:      urlHash,
-			clientset:    fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}),
+			cms:          nil,
 			expectExists: false,
 			expectErr:    false,
 		},
 		{
 			name:    "terminating probe with URL hash is excluded",
 			urlHash: urlHash,
-			clientset: fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, &corev1.ConfigMap{
+			cms: []*corev1.ConfigMap{{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "probe-terminating",
 					Namespace: testNamespace,
@@ -582,14 +603,14 @@ func TestKubernetesProbeStore_ProbeWithURLHashExists(t *testing.T) {
 					},
 				},
 				Data: map[string]string{"probe-config.json": mustMarshal(t, probe)},
-			}),
+			}},
 			expectExists: false,
 			expectErr:    false,
 		},
 		{
 			name:    "failed probe with URL hash is excluded",
 			urlHash: urlHash,
-			clientset: fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}, &corev1.ConfigMap{
+			cms: []*corev1.ConfigMap{{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "probe-failed",
 					Namespace: testNamespace,
@@ -600,7 +621,7 @@ func TestKubernetesProbeStore_ProbeWithURLHashExists(t *testing.T) {
 					},
 				},
 				Data: map[string]string{"probe-config.json": mustMarshal(t, probe)},
-			}),
+			}},
 			expectExists: false,
 			expectErr:    false,
 		},
@@ -608,8 +629,7 @@ func TestKubernetesProbeStore_ProbeWithURLHashExists(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			store, err := NewKubernetesProbeStore(ctx, tc.clientset, testNamespace)
-			require.NoError(t, err)
+			store := newTestStore(t, fake.NewSimpleClientset(), tc.cms...)
 
 			exists, err := store.ProbeWithURLHashExists(ctx, tc.urlHash)
 
@@ -765,12 +785,7 @@ func TestKubernetesProbeStore_GarbageCollectStaleProbes(t *testing.T) {
 				objects = append(objects, cm)
 			}
 			client := fake.NewSimpleClientset(objects...)
-			store := &KubernetesProbeStore{
-				Client:           client,
-				Namespace:        testNamespace,
-				StaleProbeTTL:    defaultStaleProbeTTL,
-				NoHeartbeatProbeTTL: defaultNoHeartbeatProbeTTL,
-			}
+			store := newTestStore(t, client, tt.configMaps...)
 
 			deleted, err := store.GarbageCollectStaleProbes(ctx)
 			require.NoError(t, err)
@@ -783,24 +798,6 @@ func TestKubernetesProbeStore_GarbageCollectStaleProbes(t *testing.T) {
 			assert.Equal(t, tt.expectRemaining, len(remaining.Items))
 		})
 	}
-}
-
-func TestKubernetesProbeStore_GarbageCollectStaleProbes_ListError(t *testing.T) {
-	ctx := context.Background()
-	client := fake.NewSimpleClientset()
-	client.PrependReactor("list", "configmaps", func(action k8stesting.Action) (bool, runtime.Object, error) {
-		return true, nil, errors.New("api server unavailable")
-	})
-
-	store := &KubernetesProbeStore{
-		Client:    client,
-		Namespace: testNamespace,
-	}
-
-	deleted, err := store.GarbageCollectStaleProbes(ctx)
-	assert.Error(t, err)
-	assert.Equal(t, 0, deleted)
-	assert.Contains(t, err.Error(), "failed to list probe configmaps for GC")
 }
 
 func TestKubernetesProbeStore_GarbageCollectStaleProbes_UpdateError(t *testing.T) {
@@ -816,10 +813,7 @@ func TestKubernetesProbeStore_GarbageCollectStaleProbes_UpdateError(t *testing.T
 		return true, nil, errors.New("permission denied")
 	})
 
-	store := &KubernetesProbeStore{
-		Client:    client,
-		Namespace: testNamespace,
-	}
+	store := newTestStore(t, client, cm)
 
 	deleted, err := store.GarbageCollectStaleProbes(ctx)
 	require.NoError(t, err) // update errors are logged but don't fail the GC run
