@@ -63,6 +63,7 @@ func TestSyntheticsAPITemplateStructure(t *testing.T) {
 		"Service":        false,
 		"ServiceAccount": false,
 		"Deployment":     false,
+		"NetworkPolicy":  false,
 	}
 
 	for _, obj := range objects {
