@@ -71,6 +71,49 @@ objects:
   - kind: ServiceAccount
     name: synthetics-api
     namespace: ${NAMESPACE}
+- apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata:
+    labels:
+      app.kubernetes.io/component: synthetics-api
+      app.kubernetes.io/instance: rhobs
+      app.kubernetes.io/name: synthetics-api
+      app.kubernetes.io/part-of: rhobs
+    name: synthetics-api
+    namespace: ${NAMESPACE}
+  spec:
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: synthetics-api
+    policyTypes:
+    - Ingress
+    ingress:
+    - from:
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/name: synthetics-agent
+        namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: ${NAMESPACE}
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/name: rhobs-gateway
+        namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: ${NAMESPACE}
+      ports:
+      - protocol: TCP
+        port: 8080
+    - from:
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/name: prometheus
+        namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: ${NAMESPACE}
+      ports:
+      - protocol: TCP
+        port: 8080
 - apiVersion: apps/v1
   kind: Deployment
   metadata:
