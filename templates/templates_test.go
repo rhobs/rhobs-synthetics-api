@@ -85,6 +85,108 @@ func TestSyntheticsAPITemplateStructure(t *testing.T) {
 		}
 	}
 
+	// Validate NetworkPolicy spec in detail
+	for _, obj := range objects {
+		objMap, ok := obj.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if kind, _ := objMap["kind"].(string); kind != "NetworkPolicy" {
+			continue
+		}
+
+		spec, ok := objMap["spec"].(map[string]interface{})
+		if !ok {
+			t.Fatal("NetworkPolicy should have a spec")
+		}
+
+		podSelector, ok := spec["podSelector"].(map[string]interface{})
+		if !ok {
+			t.Fatal("NetworkPolicy should have podSelector")
+		}
+		matchLabels, ok := podSelector["matchLabels"].(map[string]interface{})
+		if !ok || matchLabels["app.kubernetes.io/name"] != "synthetics-api" {
+			t.Error("NetworkPolicy podSelector should target app.kubernetes.io/name: synthetics-api")
+		}
+
+		policyTypes, ok := spec["policyTypes"].([]interface{})
+		if !ok || len(policyTypes) == 0 {
+			t.Fatal("NetworkPolicy should have policyTypes")
+		}
+		foundIngress := false
+		for _, pt := range policyTypes {
+			if pt == "Ingress" {
+				foundIngress = true
+			}
+		}
+		if !foundIngress {
+			t.Error("NetworkPolicy policyTypes should include Ingress")
+		}
+
+		ingressRules, ok := spec["ingress"].([]interface{})
+		if !ok || len(ingressRules) == 0 {
+			t.Fatal("NetworkPolicy should have ingress rules")
+		}
+
+		allowedSources := map[string]bool{
+			"synthetics-agent": false,
+			"rhobs-gateway":    false,
+			"prometheus":       false,
+		}
+		for _, rule := range ingressRules {
+			ruleMap, ok := rule.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			ports, ok := ruleMap["ports"].([]interface{})
+			if !ok || len(ports) == 0 {
+				t.Error("Each NetworkPolicy ingress rule should specify ports")
+				continue
+			}
+			for _, p := range ports {
+				portMap, ok := p.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if portMap["port"] != 8080 {
+					t.Errorf("NetworkPolicy ingress port should be 8080, got %v", portMap["port"])
+				}
+			}
+
+			from, ok := ruleMap["from"].([]interface{})
+			if !ok {
+				continue
+			}
+			for _, f := range from {
+				fMap, ok := f.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				// Ensure no rule uses namespaceSelector: {} (allows all namespaces)
+				if ns, exists := fMap["namespaceSelector"]; exists {
+					nsMap, ok := ns.(map[string]interface{})
+					if ok && len(nsMap) == 0 {
+						t.Error("NetworkPolicy should not use namespaceSelector: {} (allows all namespaces)")
+					}
+				}
+				if ps, ok := fMap["podSelector"].(map[string]interface{}); ok {
+					if ml, ok := ps["matchLabels"].(map[string]interface{}); ok {
+						if name, ok := ml["app.kubernetes.io/name"].(string); ok {
+							allowedSources[name] = true
+						}
+					}
+				}
+			}
+		}
+
+		for source, found := range allowedSources {
+			if !found {
+				t.Errorf("NetworkPolicy should allow ingress from %s", source)
+			}
+		}
+	}
+
 	// Verify parameters
 	params, ok := template["parameters"].([]interface{})
 	if !ok || len(params) == 0 {

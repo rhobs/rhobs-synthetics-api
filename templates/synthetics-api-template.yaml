@@ -92,17 +92,25 @@ objects:
       - podSelector:
           matchLabels:
             app.kubernetes.io/name: synthetics-agent
+        namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: ${NAMESPACE}
       - podSelector:
           matchLabels:
             app.kubernetes.io/name: rhobs-gateway
+        namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: ${NAMESPACE}
       ports:
       - protocol: TCP
         port: 8080
     - from:
-      - namespaceSelector: {}
-        podSelector:
+      - podSelector:
           matchLabels:
             app.kubernetes.io/name: prometheus
+        namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: ${NAMESPACE}
       ports:
       - protocol: TCP
         port: 8080
