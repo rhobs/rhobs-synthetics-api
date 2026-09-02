@@ -125,12 +125,12 @@ objects:
     name: synthetics-api
     namespace: ${NAMESPACE}
   spec:
-    replicas: 1
+    replicas: ${{REPLICA_COUNT}}
     strategy:
       type: RollingUpdate
       rollingUpdate:
-        maxUnavailable: 25%
-        maxSurge: 25%
+        maxUnavailable: 1
+        maxSurge: 0
     selector:
       matchLabels:
         app.kubernetes.io/component: synthetics-api
@@ -145,6 +145,16 @@ objects:
           app.kubernetes.io/name: synthetics-api
           app.kubernetes.io/part-of: rhobs
       spec:
+        affinity:
+          podAntiAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              - labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: synthetics-api
+                    app.kubernetes.io/instance: rhobs
+                    app.kubernetes.io/name: synthetics-api
+                    app.kubernetes.io/part-of: rhobs
+                topologyKey: kubernetes.io/hostname
         containers:
         - image: quay.io/redhat-services-prod/openshift/rhobs-synthetics-api:${IMAGE_TAG}
           imagePullPolicy: IfNotPresent
@@ -211,6 +221,11 @@ parameters:
   value: latest
 - name: NAMESPACE
   value: rhobs
+- name: REPLICA_COUNT
+  displayName: Replica Count
+  description: Number of replicas to deploy
+  value: "2"
+  required: true
 - name: PROBE_STALE_TTL
   value: "15m"
 - name: PROBE_UNLABELED_TTL
