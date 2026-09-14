@@ -133,6 +133,7 @@ func TestSyntheticsAPITemplateStructure(t *testing.T) {
 			"rhobs-gateway":    false,
 			"prometheus":       false,
 		}
+		totalFromEntries := 0
 		for _, rule := range ingressRules {
 			ruleMap, ok := rule.(map[string]interface{})
 			if !ok {
@@ -158,6 +159,7 @@ func TestSyntheticsAPITemplateStructure(t *testing.T) {
 			if !ok {
 				continue
 			}
+			totalFromEntries += len(from)
 			for _, f := range from {
 				fMap, ok := f.(map[string]interface{})
 				if !ok {
@@ -178,6 +180,10 @@ func TestSyntheticsAPITemplateStructure(t *testing.T) {
 					}
 				}
 			}
+		}
+
+		if totalFromEntries != len(allowedSources) {
+			t.Errorf("NetworkPolicy should have exactly %d from entries, got %d (unexpected source added?)", len(allowedSources), totalFromEntries)
 		}
 
 		for source, found := range allowedSources {
