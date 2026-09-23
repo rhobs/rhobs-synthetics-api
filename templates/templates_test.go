@@ -133,6 +133,7 @@ func TestSyntheticsAPITemplateStructure(t *testing.T) {
 			"rhobs-gateway":    false,
 			"prometheus":       false,
 		}
+		foundE2EAgentSource := false
 		for _, rule := range ingressRules {
 			ruleMap, ok := rule.(map[string]interface{})
 			if !ok {
@@ -175,6 +176,13 @@ func TestSyntheticsAPITemplateStructure(t *testing.T) {
 						if name, ok := ml["app.kubernetes.io/name"].(string); ok {
 							allowedSources[name] = true
 						}
+						if app, ok := ml["app"].(string); ok && app == "synthetics-agent" {
+							if ns, ok := fMap["namespaceSelector"].(map[string]interface{}); ok {
+								if nsLabels, ok := ns["matchLabels"].(map[string]interface{}); ok && nsLabels["rhobs-e2e"] == "true" {
+									foundE2EAgentSource = true
+								}
+							}
+						}
 					}
 				}
 			}
@@ -184,6 +192,9 @@ func TestSyntheticsAPITemplateStructure(t *testing.T) {
 			if !found {
 				t.Errorf("NetworkPolicy should allow ingress from %s", source)
 			}
+		}
+		if !foundE2EAgentSource {
+			t.Error("NetworkPolicy should allow synthetics-agent pods from namespaces labelled rhobs-e2e=true")
 		}
 	}
 
