@@ -92,9 +92,8 @@ objects:
       - podSelector:
           matchLabels:
             app.kubernetes.io/name: synthetics-agent
-        namespaceSelector:
-          matchLabels:
-            kubernetes.io/metadata.name: ${NAMESPACE}
+        # Agents may run in a different namespace from the shared API.
+        namespaceSelector: {}
       - podSelector:
           matchLabels:
             app.kubernetes.io/name: rhobs-gateway
