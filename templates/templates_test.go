@@ -133,6 +133,7 @@ func TestSyntheticsAPITemplateStructure(t *testing.T) {
 			"rhobs-gateway":    false,
 			"prometheus":       false,
 		}
+		foundCrossNamespaceAgentSource := false
 		for _, rule := range ingressRules {
 			ruleMap, ok := rule.(map[string]interface{})
 			if !ok {
@@ -149,10 +150,14 @@ func TestSyntheticsAPITemplateStructure(t *testing.T) {
 				if !ok {
 					continue
 				}
-				if portMap["port"] != 8080 {
-					t.Errorf("NetworkPolicy ingress port should be 8080, got %v", portMap["port"])
+					if portMap["port"] != 8080 {
+						t.Errorf("NetworkPolicy ingress port should be 8080, got %v", portMap["port"])
+					}
+					// Kubernetes defaults an omitted NetworkPolicy protocol to TCP.
+					if protocol, exists := portMap["protocol"]; exists && protocol != "TCP" {
+						t.Errorf("NetworkPolicy ingress protocol should be TCP or omitted, got %v", protocol)
+					}
 				}
-			}
 
 			from, ok := ruleMap["from"].([]interface{})
 			if !ok {
@@ -163,17 +168,22 @@ func TestSyntheticsAPITemplateStructure(t *testing.T) {
 				if !ok {
 					continue
 				}
-				// Ensure no rule uses namespaceSelector: {} (allows all namespaces)
-				if ns, exists := fMap["namespaceSelector"]; exists {
-					nsMap, ok := ns.(map[string]interface{})
-					if ok && len(nsMap) == 0 {
-						t.Error("NetworkPolicy should not use namespaceSelector: {} (allows all namespaces)")
-					}
-				}
 				if ps, ok := fMap["podSelector"].(map[string]interface{}); ok {
 					if ml, ok := ps["matchLabels"].(map[string]interface{}); ok {
-						if name, ok := ml["app.kubernetes.io/name"].(string); ok {
+						name, _ := ml["app.kubernetes.io/name"].(string)
+						if name != "" {
 							allowedSources[name] = true
+						}
+
+						if ns, exists := fMap["namespaceSelector"]; exists {
+							nsMap, ok := ns.(map[string]interface{})
+							if ok && len(nsMap) == 0 {
+								if name == "synthetics-agent" {
+									foundCrossNamespaceAgentSource = true
+								} else {
+									t.Error("Only synthetics-agent may use namespaceSelector: {} to allow all namespaces")
+								}
+							}
 						}
 					}
 				}
@@ -184,6 +194,9 @@ func TestSyntheticsAPITemplateStructure(t *testing.T) {
 			if !found {
 				t.Errorf("NetworkPolicy should allow ingress from %s", source)
 			}
+		}
+		if !foundCrossNamespaceAgentSource {
+			t.Error("NetworkPolicy should allow synthetics-agent pods from all namespaces")
 		}
 	}
 
