@@ -114,6 +114,19 @@ objects:
       ports:
       - protocol: TCP
         port: 8080
+    # The real-cluster e2e job creates a short-lived namespace labelled
+    # rhobs-e2e=true. Permit only its synthetics-agent test pod to query the
+    # shared integration API; all other cross-namespace traffic remains denied.
+    - from:
+      - podSelector:
+          matchLabels:
+            app: synthetics-agent
+        namespaceSelector:
+          matchLabels:
+            rhobs-e2e: "true"
+      ports:
+      - protocol: TCP
+        port: 8080
 - apiVersion: apps/v1
   kind: Deployment
   metadata:

@@ -133,6 +133,7 @@ func TestSyntheticsAPITemplateStructure(t *testing.T) {
 			"rhobs-gateway":    false,
 			"prometheus":       false,
 		}
+		foundE2EAgentSource := false
 		for _, rule := range ingressRules {
 			ruleMap, ok := rule.(map[string]interface{})
 			if !ok {
@@ -144,6 +145,7 @@ func TestSyntheticsAPITemplateStructure(t *testing.T) {
 				t.Error("Each NetworkPolicy ingress rule should specify ports")
 				continue
 			}
+			ruleAllowsTCP8080 := false
 			for _, p := range ports {
 				portMap, ok := p.(map[string]interface{})
 				if !ok {
@@ -151,6 +153,13 @@ func TestSyntheticsAPITemplateStructure(t *testing.T) {
 				}
 				if portMap["port"] != 8080 {
 					t.Errorf("NetworkPolicy ingress port should be 8080, got %v", portMap["port"])
+				}
+				protocol, hasProtocol := portMap["protocol"]
+				if hasProtocol && protocol != "TCP" {
+					t.Errorf("NetworkPolicy ingress protocol should be TCP or omitted, got %v", protocol)
+				}
+				if portMap["port"] == 8080 && (!hasProtocol || protocol == "TCP") {
+					ruleAllowsTCP8080 = true
 				}
 			}
 
@@ -175,6 +184,13 @@ func TestSyntheticsAPITemplateStructure(t *testing.T) {
 						if name, ok := ml["app.kubernetes.io/name"].(string); ok {
 							allowedSources[name] = true
 						}
+						if app, ok := ml["app"].(string); ok && app == "synthetics-agent" {
+							if ns, ok := fMap["namespaceSelector"].(map[string]interface{}); ok {
+								if nsLabels, ok := ns["matchLabels"].(map[string]interface{}); ok && nsLabels["rhobs-e2e"] == "true" && ruleAllowsTCP8080 {
+									foundE2EAgentSource = true
+								}
+							}
+						}
 					}
 				}
 			}
@@ -184,6 +200,9 @@ func TestSyntheticsAPITemplateStructure(t *testing.T) {
 			if !found {
 				t.Errorf("NetworkPolicy should allow ingress from %s", source)
 			}
+		}
+		if !foundE2EAgentSource {
+			t.Error("NetworkPolicy should allow synthetics-agent pods from namespaces labelled rhobs-e2e=true on TCP port 8080")
 		}
 	}
 
