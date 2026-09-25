@@ -22,6 +22,13 @@ const (
 	// probe ConfigMap during reconciliation. Stored as an annotation (not a label)
 	// to avoid Prometheus metric label churn.
 	lastReconciledKey = "last-reconciled"
+	// terminationStartedKey records when GC first gave the agent a chance to
+	// remove its Probe CR. Each API replica can run GC independently.
+	terminationStartedKey = "rhobs-synthetics/termination-started-at"
+
+	// ProbeTerminationGracePeriod must cover at least one agent reconciliation
+	// interval even when two API replicas run GC back to back.
+	ProbeTerminationGracePeriod = 15 * time.Minute
 
 	// defaultStaleProbeTTL is how long a probe can go without being reconciled
 	// before the GC loop considers it stale and deletes it.
@@ -36,9 +43,9 @@ const (
 
 // KubernetesProbeStore implements the ProbeStorage interface using Kubernetes ConfigMaps.
 type KubernetesProbeStore struct {
-	Client             kubernetes.Interface
-	Namespace          string
-	StaleProbeTTL      time.Duration
+	Client              kubernetes.Interface
+	Namespace           string
+	StaleProbeTTL       time.Duration
 	NoHeartbeatProbeTTL time.Duration
 }
 
@@ -69,9 +76,9 @@ func NewKubernetesProbeStore(ctx context.Context, client kubernetes.Interface, n
 	}
 	log.Printf("Initializing Kubernetes probe store in namespace %q (stale TTL: %s, no-heartbeat TTL: %s)", namespace, staleTTL, noHeartbeatTTL)
 	return &KubernetesProbeStore{
-		Client:             client,
-		Namespace:          namespace,
-		StaleProbeTTL:      staleTTL,
+		Client:              client,
+		Namespace:           namespace,
+		StaleProbeTTL:       staleTTL,
 		NoHeartbeatProbeTTL: noHeartbeatTTL,
 	}, nil
 }
@@ -351,11 +358,14 @@ func (k *KubernetesProbeStore) GarbageCollectStaleProbes(ctx context.Context) (i
 			// to be considered abandoned (e.g., from a non-RHOBS-enabled sector
 			// that will never get heartbeats).
 			if !cm.CreationTimestamp.IsZero() && now.Sub(cm.CreationTimestamp.Time) > k.NoHeartbeatProbeTTL {
-				if err := k.transitionToTerminating(ctx, &cm, "no heartbeat ever received"); err != nil {
+				changed, err := k.transitionToTerminating(ctx, &cm, now, "no heartbeat ever received")
+				if err != nil {
 					log.Printf("GC: failed to transition no-heartbeat probe %s to terminating: %v", cm.Name, err)
 					continue
 				}
-				deleted++
+				if changed {
+					deleted++
+				}
 			}
 			continue
 		}
@@ -371,11 +381,14 @@ func (k *KubernetesProbeStore) GarbageCollectStaleProbes(ctx context.Context) (i
 		}
 
 		// Probe is stale -- transition to terminating so the agent can clean up the Probe CR
-		if err := k.transitionToTerminating(ctx, &cm, fmt.Sprintf("stale heartbeat %s", lastReconciledStr)); err != nil {
+		changed, err := k.transitionToTerminating(ctx, &cm, now, fmt.Sprintf("stale heartbeat %s", lastReconciledStr))
+		if err != nil {
 			log.Printf("GC: failed to transition stale probe %s to terminating: %v", cm.Name, err)
 			continue
 		}
-		deleted++
+		if changed {
+			deleted++
+		}
 	}
 
 	return deleted, nil
@@ -385,20 +398,39 @@ func (k *KubernetesProbeStore) GarbageCollectStaleProbes(ctx context.Context) (i
 // it directly. This allows the synthetics-agent to see the terminating probe and
 // clean up the corresponding Probe CR on the backplane/cell before the probe is
 // fully removed from the API.
-func (k *KubernetesProbeStore) transitionToTerminating(ctx context.Context, cm *corev1.ConfigMap, reason string) error {
+func (k *KubernetesProbeStore) transitionToTerminating(ctx context.Context, cm *corev1.ConfigMap, now time.Time, reason string) (bool, error) {
+	if cm.Annotations == nil {
+		cm.Annotations = make(map[string]string)
+	}
 	currentStatus := cm.Labels[probeStatusLabelKey]
 	if currentStatus == string(v1.Terminating) {
-		// Already terminating -- delete it (agent had its chance)
+		started, err := time.Parse(time.RFC3339Nano, cm.Annotations[terminationStartedKey])
+		if err != nil {
+			// Older terminating probes have no timestamp. Give them a full
+			// grace period rather than guessing when the agent saw them.
+			cm.Annotations[terminationStartedKey] = now.Format(time.RFC3339Nano)
+			_, err = k.Client.CoreV1().ConfigMaps(k.Namespace).Update(ctx, cm, metav1.UpdateOptions{})
+			return false, err
+		}
+		if now.Sub(started) < ProbeTerminationGracePeriod {
+			return false, nil
+		}
+		// The agent has had a full grace period to remove the Probe CR.
 		log.Printf("GC: deleting already-terminating probe %s (%s)", cm.Name, reason)
-		return k.Client.CoreV1().ConfigMaps(k.Namespace).Delete(ctx, cm.Name, metav1.DeleteOptions{})
+		options := metav1.DeleteOptions{}
+		if cm.ResourceVersion != "" {
+			options.Preconditions = &metav1.Preconditions{ResourceVersion: &cm.ResourceVersion}
+		}
+		return true, k.Client.CoreV1().ConfigMaps(k.Namespace).Delete(ctx, cm.Name, options)
 	}
 
 	// Transition to terminating
 	cm.Labels[probeStatusLabelKey] = string(v1.Terminating)
+	cm.Annotations[terminationStartedKey] = now.Format(time.RFC3339Nano)
 	_, err := k.Client.CoreV1().ConfigMaps(k.Namespace).Update(ctx, cm, metav1.UpdateOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to update status to terminating: %w", err)
+		return false, fmt.Errorf("failed to update status to terminating: %w", err)
 	}
 	log.Printf("GC: transitioned probe %s to terminating (%s)", cm.Name, reason)
-	return nil
+	return true, nil
 }
