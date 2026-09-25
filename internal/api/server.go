@@ -301,7 +301,7 @@ func (s Server) updateProbeMetrics(ctx context.Context) {
 // the TTL (1 hour). RMO refreshes this timestamp every ~10 minutes for active
 // clusters, so a stale timestamp means the cluster was deleted.
 func (s Server) GarbageCollectProbes(ctx context.Context) {
-	const gcInterval = 15 * time.Minute
+	const gcInterval = probestore.ProbeTerminationGracePeriod
 	log.Printf("Starting probe garbage collection (interval: %s)", gcInterval)
 	ticker := time.NewTicker(gcInterval)
 	defer ticker.Stop()

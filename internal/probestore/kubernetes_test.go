@@ -365,10 +365,9 @@ func TestKubernetesProbeStore_UpdateProbe(t *testing.T) {
 	}
 }
 
-
 func TestKubernetesProbeStore_DeleteProbe(t *testing.T) {
 	ctx := context.Background()
-	
+
 	// Test data for different probe states
 	probeIDActive := uuid.New()
 	probeActive := v1.ProbeObject{Id: probeIDActive, StaticUrl: "http://example.com/active", Status: v1.Active, Labels: &v1.LabelsSchema{"env": "prod"}}
@@ -766,9 +765,9 @@ func TestKubernetesProbeStore_GarbageCollectStaleProbes(t *testing.T) {
 			}
 			client := fake.NewSimpleClientset(objects...)
 			store := &KubernetesProbeStore{
-				Client:           client,
-				Namespace:        testNamespace,
-				StaleProbeTTL:    defaultStaleProbeTTL,
+				Client:              client,
+				Namespace:           testNamespace,
+				StaleProbeTTL:       defaultStaleProbeTTL,
 				NoHeartbeatProbeTTL: defaultNoHeartbeatProbeTTL,
 			}
 
@@ -783,6 +782,57 @@ func TestKubernetesProbeStore_GarbageCollectStaleProbes(t *testing.T) {
 			assert.Equal(t, tt.expectRemaining, len(remaining.Items))
 		})
 	}
+}
+
+func TestKubernetesProbeStore_GCRespectsTerminationGraceAcrossReplicas(t *testing.T) {
+	ctx := context.Background()
+	stale := time.Now().UTC().Add(-2 * time.Hour).Format("20060102T150405Z")
+	cm := makeProbeConfigMap("probe-stale-ha", testNamespace, map[string]string{lastReconciledKey: stale})
+	client := fake.NewSimpleClientset(cm)
+	first := &KubernetesProbeStore{Client: client, Namespace: testNamespace, StaleProbeTTL: defaultStaleProbeTTL}
+	second := &KubernetesProbeStore{Client: client, Namespace: testNamespace, StaleProbeTTL: defaultStaleProbeTTL}
+
+	changed, err := first.GarbageCollectStaleProbes(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, changed)
+	terminating, err := client.CoreV1().ConfigMaps(testNamespace).Get(ctx, cm.Name, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Equal(t, string(v1.Terminating), terminating.Labels[probeStatusLabelKey])
+	require.NotEmpty(t, terminating.Annotations[terminationStartedKey])
+
+	changed, err = second.GarbageCollectStaleProbes(ctx)
+	require.NoError(t, err)
+	require.Zero(t, changed, "a second replica must not delete a just-terminating probe")
+	_, err = client.CoreV1().ConfigMaps(testNamespace).Get(ctx, cm.Name, metav1.GetOptions{})
+	require.NoError(t, err)
+
+	terminating.Annotations[terminationStartedKey] = time.Now().UTC().Add(-ProbeTerminationGracePeriod - time.Minute).Format(time.RFC3339Nano)
+	_, err = client.CoreV1().ConfigMaps(testNamespace).Update(ctx, terminating, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	changed, err = second.GarbageCollectStaleProbes(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, changed)
+	_, err = client.CoreV1().ConfigMaps(testNamespace).Get(ctx, cm.Name, metav1.GetOptions{})
+	require.True(t, k8serrors.IsNotFound(err), "probe should be deleted once grace has elapsed: %v", err)
+}
+
+func TestKubernetesProbeStore_GCStartsGraceForLegacyTerminatingProbe(t *testing.T) {
+	ctx := context.Background()
+	stale := time.Now().UTC().Add(-2 * time.Hour).Format("20060102T150405Z")
+	cm := makeProbeConfigMap("probe-legacy-terminating", testNamespace, map[string]string{
+		lastReconciledKey:   stale,
+		probeStatusLabelKey: string(v1.Terminating),
+	})
+	client := fake.NewSimpleClientset(cm)
+	store := &KubernetesProbeStore{Client: client, Namespace: testNamespace, StaleProbeTTL: defaultStaleProbeTTL}
+	for i := 0; i < 2; i++ {
+		changed, err := store.GarbageCollectStaleProbes(ctx)
+		require.NoError(t, err)
+		require.Zero(t, changed)
+	}
+	remaining, err := client.CoreV1().ConfigMaps(testNamespace).Get(ctx, cm.Name, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, remaining.Annotations[terminationStartedKey])
 }
 
 func TestKubernetesProbeStore_GarbageCollectStaleProbes_ListError(t *testing.T) {

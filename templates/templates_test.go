@@ -229,6 +229,74 @@ func TestSyntheticsAPITemplateStructure(t *testing.T) {
 	}
 }
 
+func TestSyntheticsAPITemplateHAConfiguration(t *testing.T) {
+	content, err := os.ReadFile("synthetics-api-template.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var template struct {
+		Objects []struct {
+			Kind string `yaml:"kind"`
+			Spec struct {
+				Replicas string `yaml:"replicas"`
+				Strategy struct {
+					RollingUpdate struct {
+						MaxSurge       int `yaml:"maxSurge"`
+						MaxUnavailable int `yaml:"maxUnavailable"`
+					} `yaml:"rollingUpdate"`
+				} `yaml:"strategy"`
+				Template struct {
+					Spec struct {
+						Affinity struct {
+							PodAntiAffinity struct {
+								Required []struct {
+									TopologyKey string `yaml:"topologyKey"`
+								} `yaml:"requiredDuringSchedulingIgnoredDuringExecution"`
+							} `yaml:"podAntiAffinity"`
+						} `yaml:"affinity"`
+					} `yaml:"spec"`
+				} `yaml:"template"`
+			} `yaml:"spec"`
+		} `yaml:"objects"`
+		Parameters []struct {
+			Name  string `yaml:"name"`
+			Value string `yaml:"value"`
+		} `yaml:"parameters"`
+	}
+	if err := yaml.Unmarshal(content, &template); err != nil {
+		t.Fatal(err)
+	}
+	replicaCountFound := false
+	for _, p := range template.Parameters {
+		if p.Name == "REPLICA_COUNT" {
+			replicaCountFound = true
+			if p.Value != "2" {
+				t.Fatalf("REPLICA_COUNT default = %q, want 2", p.Value)
+			}
+		}
+	}
+	if !replicaCountFound {
+		t.Fatal("REPLICA_COUNT parameter not found")
+	}
+	for _, object := range template.Objects {
+		if object.Kind != "Deployment" {
+			continue
+		}
+		if object.Spec.Replicas != "${{REPLICA_COUNT}}" {
+			t.Errorf("replicas = %q, want parameterized count", object.Spec.Replicas)
+		}
+		if object.Spec.Strategy.RollingUpdate.MaxSurge != 0 || object.Spec.Strategy.RollingUpdate.MaxUnavailable != 1 {
+			t.Error("HA rollout requires maxSurge=0 and maxUnavailable=1")
+		}
+		required := object.Spec.Template.Spec.Affinity.PodAntiAffinity.Required
+		if len(required) != 1 || required[0].TopologyKey != "kubernetes.io/hostname" {
+			t.Error("API replicas must have required hostname anti-affinity")
+		}
+		return
+	}
+	t.Fatal("Deployment not found in API template")
+}
+
 func TestServiceMonitorTemplateStructure(t *testing.T) {
 	content, err := os.ReadFile("service-monitor-synthetics-api-template.yaml")
 	if err != nil {
