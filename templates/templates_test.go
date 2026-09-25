@@ -246,10 +246,16 @@ func TestSyntheticsAPITemplateHAConfiguration(t *testing.T) {
 					} `yaml:"rollingUpdate"`
 				} `yaml:"strategy"`
 				Template struct {
+					Metadata struct {
+						Labels map[string]string `yaml:"labels"`
+					} `yaml:"metadata"`
 					Spec struct {
 						Affinity struct {
 							PodAntiAffinity struct {
 								Required []struct {
+									LabelSelector struct {
+										MatchLabels map[string]string `yaml:"matchLabels"`
+									} `yaml:"labelSelector"`
 									TopologyKey string `yaml:"topologyKey"`
 								} `yaml:"requiredDuringSchedulingIgnoredDuringExecution"`
 							} `yaml:"podAntiAffinity"`
@@ -291,6 +297,17 @@ func TestSyntheticsAPITemplateHAConfiguration(t *testing.T) {
 		required := object.Spec.Template.Spec.Affinity.PodAntiAffinity.Required
 		if len(required) != 1 || required[0].TopologyKey != "kubernetes.io/hostname" {
 			t.Error("API replicas must have required hostname anti-affinity")
+		} else {
+			selector := required[0].LabelSelector.MatchLabels
+			labels := object.Spec.Template.Metadata.Labels
+			if len(selector) == 0 {
+				t.Error("anti-affinity selector must select API pods")
+			}
+			for key, value := range selector {
+				if labels[key] != value {
+					t.Errorf("anti-affinity selector %q=%q does not match pod label", key, value)
+				}
+			}
 		}
 		return
 	}
