@@ -14,7 +14,7 @@ make test                       # go test -cover ./...
 make test-templates             # only the OpenShift template tests in ./templates
 make lint                       # golangci-lint (auto-installs pinned version into GOPATH/bin)
 make lint-fix
-make generate                   # regenerate pkg/apis/v1/types.go from api/v1/openapi.yaml
+make generate                   # currently broken; see "The API is spec-first" below
 make coverage                   # hack/codecov.sh; writes coverage.out (excludes pkg/apis/v1)
 make docker-build               # uses podman by default; override with CONTAINER_ENGINE=docker
 
@@ -37,7 +37,15 @@ In the container image, `APP_ENV=dev` makes `entrypoint.sh` add `--database-engi
 
 ## Architecture
 
-**The API is spec-first.** `api/v1/openapi.yaml` is the source of truth. `build/codegen/generate.go` has a `//go:generate` directive that runs oapi-codegen with `build/codegen/cfg.yaml` and produces `pkg/apis/v1/types.go`, which contains the models, the strict-server interface, the std-http router and the embedded spec. Don't edit `types.go` by hand: change the spec, run `make generate`, then implement any new operations on `api.Server`.
+**The API is spec-first.** `api/v1/openapi.yaml` is the source of truth. `build/codegen/generate.go` has a `//go:generate` directive that runs oapi-codegen with `build/codegen/cfg.yaml` and produces `pkg/apis/v1/types.go`, which contains the models, the strict-server interface, the std-http router and the embedded spec. Don't edit `types.go` by hand: change the spec, regenerate, then implement any new operations on `api.Server`.
+
+`make generate` currently fails. The `//go:generate` line runs the unversioned v2 module, `github.com/oapi-codegen/oapi-codegen/v2`, which isn't in `go.mod`, and the legacy `deepmap/oapi-codegen` binary the Makefile installs is never used. Regenerate with the version that produced the committed file instead:
+
+```sh
+cd build/codegen && go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.5.0 -config cfg.yaml ../../api/v1/openapi.yaml
+```
+
+This writes to the `output:` path in `cfg.yaml` and ignores `-o`. The gzipped embedded-spec string can differ byte for byte from the committed one even when the spec is unchanged, so check that the decoded spec changed before committing a diff that touches only `swaggerSpec`.
 
 **Request path** (`cmd/api/main.go`): API requests enter the outer `http.ServeMux` at `/`, then pass through `metrics.Middleware`, `OapiRequestValidator` (which validates against the embedded spec), and the generated `HandlerFromMux`. Because metrics wraps validation, it records validator responses such as `400` errors. `/livez`, `/readyz`, `/docs`, `/api/v1/openapi.json`, and `/metrics` are registered directly on the outer mux and bypass this API middleware chain. `/readyz` checks Kubernetes API connectivity only when the `etcd` engine is in use.
 
