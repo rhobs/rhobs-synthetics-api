@@ -1,6 +1,14 @@
 reviewers:
+- geowa4
+- eth1030
+- BATMAN-JD
+- AlexSmithGH
 - rhobs-platform-sre
 - rhobs-eng
 approvers:
+- geowa4
+- eth1030
+- BATMAN-JD
+- AlexSmithGH
 - rhobs-platform-sre
 - rhobs-eng
