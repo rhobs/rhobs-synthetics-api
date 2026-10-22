@@ -1,14 +1,8 @@
 reviewers:
-- geowa4
-- eth1030
-- BATMAN-JD
-- AlexSmithGH
+- rosa-trust-engineering-observability
 - rhobs-platform-sre
 - rhobs-eng
 approvers:
-- geowa4
-- eth1030
-- BATMAN-JD
-- AlexSmithGH
+- rosa-trust-engineering-observability
 - rhobs-platform-sre
 - rhobs-eng
