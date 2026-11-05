@@ -16,3 +16,9 @@ aliases:
     - philipgough
     - saswatamcode
     - simonpasquier
+  # Synced from openshift/boilerplate OWNERS_ALIASES.
+  rosa-trust-engineering-observability:
+    - geowa4
+    - eth1030
+    - BATMAN-JD
+    - AlexSmithGH
