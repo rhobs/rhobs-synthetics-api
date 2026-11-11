@@ -1,0 +1,24 @@
+# Retain the repository's Go toolchain for application compilation.
+FROM quay.io/redhat-services-prod/openshift/boilerplate:image-v8.4.1 AS builder
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN make build
+# Only the shell replacement is forced static; application build flags stay intact.
+RUN CGO_ENABLED=0 go build -o /out/entrypoint ./build/hummingbird-entrypoint && \
+    go test ./build/hummingbird-entrypoint && \
+    mkdir -p /out/home/data && \
+    chmod 0775 /out/home /out/home/data
+
+FROM registry.access.redhat.com/hi/core-runtime:2.43-openssl-fips@sha256:dda4ca9f205064c1391168713fae4dfe32057f3a1e619540db34f9d167b71c74 AS runner
+ENV HOME=/home/rhobs
+WORKDIR /home/rhobs
+# App-owned writable directories support the default UID and OpenShift group 0.
+COPY --from=builder --chown=65532:0 /out/home/ /home/rhobs/
+COPY --from=builder --chown=65532:0 /app/rhobs-synthetics-api ./rhobs-synthetics-api
+COPY --from=builder /app/LICENSE /licenses/LICENSE
+COPY --from=builder /out/entrypoint /usr/local/bin/entrypoint
+EXPOSE 8080
+USER 65532:0
+ENTRYPOINT ["/usr/local/bin/entrypoint"]
