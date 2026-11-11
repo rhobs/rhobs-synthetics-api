@@ -10,7 +10,7 @@ metadata:
     pipelinesascode.tekton.dev/on-cel-expression: event == "push" && target_branch == "main"
   creationTimestamp:
   labels:
-    appstudio.openshift.io/application: rhobs-synthetics-api-main-hummingbird
+    appstudio.openshift.io/application: rhobs-synthetics-api-main
     appstudio.openshift.io/component: rhobs-synthetics-api-main-hummingbird
     pipelines.appstudio.openshift.io/type: build
   name: rhobs-synthetics-api-main-hummingbird-on-push
